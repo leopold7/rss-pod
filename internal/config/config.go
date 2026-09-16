@@ -439,7 +439,18 @@ func resolveEnvironment(node *yaml.Node) error {
 		if !ok {
 			return fmt.Errorf("environment variable %s is not set", name)
 		}
+		// An env reference is written as a YAML string, so the substituted text
+		// must be re-resolved for typed fields: DATABASE_PORT=5432 has to satisfy
+		// an int field instead of failing with "cannot unmarshal !!str".
 		node.Value = value
+		node.Style = 0
+		if isNullScalar(value) {
+			// yaml.v3 cannot decode !!null into string fields, so empty values
+			// stay strings and still clear string and *string overrides.
+			node.Tag = "!!str"
+		} else {
+			node.Tag = ""
+		}
 	}
 	for _, child := range node.Content {
 		if err := resolveEnvironment(child); err != nil {
@@ -447,6 +458,15 @@ func resolveEnvironment(node *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+// isNullScalar reports whether yaml.v3 would resolve a plain scalar to !!null.
+func isNullScalar(value string) bool {
+	switch value {
+	case "", "~", "null", "Null", "NULL":
+		return true
+	}
+	return false
 }
 
 func (c *Config) Validate() error {

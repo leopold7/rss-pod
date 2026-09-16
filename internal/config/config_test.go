@@ -98,6 +98,104 @@ func TestLoadDoesNotInterpolateEnvironmentIntoYAML(t *testing.T) {
 	}
 }
 
+func TestLoadResolvesTypedEnvironmentValues(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		new  string
+		env  map[string]string
+		want func(*testing.T, *Config)
+	}{
+		{
+			name: "integer field",
+			old:  "port: 5432",
+			new:  "port: env://TEST_PORT",
+			env:  map[string]string{"TEST_PORT": "32707"},
+			want: func(t *testing.T, cfg *Config) {
+				if cfg.Runtime.Database.Port != 32707 {
+					t.Fatalf("database port = %d, want 32707", cfg.Runtime.Database.Port)
+				}
+			},
+		},
+		{
+			name: "quoted integer field",
+			old:  "port: 5432",
+			new:  `port: "env://TEST_PORT"`,
+			env:  map[string]string{"TEST_PORT": "5433"},
+			want: func(t *testing.T, cfg *Config) {
+				if cfg.Runtime.Database.Port != 5433 {
+					t.Fatalf("database port = %d, want 5433", cfg.Runtime.Database.Port)
+				}
+			},
+		},
+		{
+			name: "boolean field",
+			old:  "force_path_style: true",
+			new:  "force_path_style: env://TEST_FORCE_PATH_STYLE",
+			env:  map[string]string{"TEST_FORCE_PATH_STYLE": "false"},
+			want: func(t *testing.T, cfg *Config) {
+				if cfg.Runtime.Storage.ForcePathStyle {
+					t.Fatal("storage force_path_style = true, want false")
+				}
+			},
+		},
+		{
+			name: "numeric text stays a string field",
+			old:  "host: localhost",
+			new:  "host: env://TEST_HOST",
+			env:  map[string]string{"TEST_HOST": "12345"},
+			want: func(t *testing.T, cfg *Config) {
+				if cfg.Runtime.Database.Host != "12345" {
+					t.Fatalf("database host = %q, want 12345", cfg.Runtime.Database.Host)
+				}
+			},
+		},
+		{
+			name: "empty value clears a string field",
+			old:  "password: PASSWORD",
+			new:  "password: env://TEST_PASSWORD",
+			env:  map[string]string{"TEST_PASSWORD": ""},
+			want: func(t *testing.T, cfg *Config) {
+				if cfg.Runtime.Database.Password != "" {
+					t.Fatalf("database password = %q, want empty", cfg.Runtime.Database.Password)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for name, value := range test.env {
+				t.Setenv(name, value)
+			}
+			data := strings.Replace(minimalConfig, test.old, test.new, 1)
+			if data == minimalConfig {
+				t.Fatalf("test fixture does not contain %q", test.old)
+			}
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			test.want(t, cfg)
+		})
+	}
+}
+
+func TestLoadRejectsUnsetEnvironmentReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := strings.Replace(minimalConfig, "port: 5432", "port: env://RSS_POD_MISSING_PORT", 1)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "RSS_POD_MISSING_PORT is not set") {
+		t.Fatalf("Load() error = %v, want unset environment variable error", err)
+	}
+}
+
 func TestHTTPManagementAddressDefaultsToLoopback(t *testing.T) {
 	if got := (HTTPConfig{}).ManagementAddress(); got != "127.0.0.1:8081" {
 		t.Fatalf("ManagementAddress() = %q, want 127.0.0.1:8081", got)
