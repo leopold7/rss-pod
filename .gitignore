@@ -4,3 +4,5 @@
 config.yaml
 notice.md
 .DS_Store
+.codebuddy/
+.vscode/
