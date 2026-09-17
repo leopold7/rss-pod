@@ -648,16 +648,37 @@ func (c *Config) validateTTSServices() error {
 	return nil
 }
 
-// referencedTTSServices reports which TTS services any dialogue profile voice
-// speaks through. Voice syntax errors are ignored here because they are
-// reported by validateDialogueProfile.
+// usedDialogueProfiles reports which dialogue profiles can actually run: the
+// default profile plus the effective profile of every configured source.
+// Declared profiles that no source selects are deliberately excluded, so they
+// do not impose service requirements on a deployment that never uses them.
+func (c *Config) usedDialogueProfiles() map[string]bool {
+	used := make(map[string]bool)
+	if name := c.Defaults.Generation.DialogueProfile; name != "" {
+		used[name] = true
+	}
+	for _, source := range c.Sources {
+		if name := c.EffectiveGeneration(source).DialogueProfile; name != "" {
+			used[name] = true
+		}
+	}
+	return used
+}
+
+// referencedTTSServices reports which TTS services are reachable from the
+// dialogue profiles that can run. Voice syntax errors are ignored here because
+// they are reported by validateDialogueProfile.
 func (c *Config) referencedTTSServices() map[string]bool {
 	referenced := make(map[string]bool)
-	for _, profile := range c.DialogueProfiles {
+	for name := range c.usedDialogueProfiles() {
+		profile, ok := c.DialogueProfiles[name]
+		if !ok {
+			continue // reported by validateGeneration
+		}
 		for _, speaker := range profile.Speakers {
 			voice, err := ParseSpeakerVoice(speaker.Voice)
 			if err != nil {
-				continue
+				continue // reported by validateDialogueProfile
 			}
 			referenced[voice.Service] = true
 		}
@@ -693,6 +714,10 @@ func (c *Config) validateDialogueProfile(name string, profile DialogueProfile) e
 		return fmt.Errorf("%s.speakers must contain at least one speaker", field)
 	}
 	seen := make(map[string]struct{}, len(profile.Speakers))
+	// A profile no source selects cannot run, so its voices only need to be
+	// syntactically valid; requiring a declared service would force unused
+	// services (for example azure) to stay configured forever.
+	used := c.usedDialogueProfiles()[name]
 	var voices []SpeakerVoice
 	for i, speaker := range profile.Speakers {
 		if strings.TrimSpace(speaker.ID) == "" || strings.TrimSpace(speaker.Name) == "" ||
@@ -706,7 +731,7 @@ func (c *Config) validateDialogueProfile(name string, profile DialogueProfile) e
 		if err != nil {
 			return fmt.Errorf("%s.speakers[%d].voice %w", field, i, err)
 		}
-		if _, ok := c.Services.TTS[voice.Service]; !ok {
+		if _, ok := c.Services.TTS[voice.Service]; !ok && used {
 			return fmt.Errorf("%s.speakers[%d].voice references unknown TTS service %q", field, i, voice.Service)
 		}
 		voices = append(voices, voice)

@@ -411,24 +411,46 @@ func TestValidateTTSServicesRequiresAzureKeyOnlyWhenUsed(t *testing.T) {
 		ConnectTimeout: "1s",
 		ReceiveTimeout: "2s",
 	}
-	cfg := Config{Services: ServicesConfig{TTS: map[string]TTSService{
-		EdgeTTSServiceName:  {ConnectTimeout: "1s", ReceiveTimeout: "2s"},
-		AzureTTSServiceName: azure,
-	}}}
-	if err := cfg.validateTTSServices(); err != nil {
-		t.Fatalf("unused azure service without api_key rejected: %v", err)
-	}
-
-	cfg.DialogueProfiles = map[string]DialogueProfile{
-		"azure-profile": {
-			Rate: "+0%", Volume: "+0%", Pitch: "+0Hz",
-			Speakers: []SpeakerConfig{
-				{ID: "host", Name: "Host", Role: "Host role", Voice: "azure:zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural"},
+	cfg := Config{
+		Services: ServicesConfig{TTS: map[string]TTSService{
+			EdgeTTSServiceName:  {ConnectTimeout: "1s", ReceiveTimeout: "2s"},
+			AzureTTSServiceName: azure,
+		}},
+		DialogueProfiles: map[string]DialogueProfile{
+			"azure-profile": {
+				Rate: "+0%", Volume: "+0%", Pitch: "+0Hz",
+				Speakers: []SpeakerConfig{
+					{ID: "host", Name: "Host", Role: "Host role", Voice: "azure:zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural"},
+				},
 			},
 		},
 	}
+	if err := cfg.validateTTSServices(); err != nil {
+		t.Fatalf("azure service unused by any source rejected: %v", err)
+	}
+	cfg.Sources = []SourceConfig{{
+		ID:         "test",
+		Generation: &GenerationConfig{DialogueProfile: "azure-profile"},
+	}}
 	if err := cfg.validateTTSServices(); err == nil || !strings.Contains(err.Error(), "api_key must not be empty") {
 		t.Fatalf("validateTTSServices() error = %v, want azure api_key requirement", err)
+	}
+}
+
+func TestValidateDialogueProfileSkipsUnusedServiceReferences(t *testing.T) {
+	cfg := Config{Services: ServicesConfig{TTS: map[string]TTSService{EdgeTTSServiceName: {}}}}
+	profile := DialogueProfile{
+		Rate: "+0%", Volume: "+0%", Pitch: "+0Hz",
+		Speakers: []SpeakerConfig{
+			{ID: "host", Name: "Host", Role: "Host role", Voice: "azure:zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural"},
+		},
+	}
+	if err := cfg.validateDialogueProfile("unused", profile); err != nil {
+		t.Fatalf("unused profile referencing an undeclared service rejected: %v", err)
+	}
+	cfg.Defaults.Generation.DialogueProfile = "unused"
+	if err := cfg.validateDialogueProfile("unused", profile); err == nil || !strings.Contains(err.Error(), "unknown TTS service") {
+		t.Fatalf("validateDialogueProfile() error = %v, want unknown TTS service error", err)
 	}
 }
 
@@ -486,10 +508,13 @@ func TestParseSpeakerVoiceMultiTalker(t *testing.T) {
 }
 
 func TestValidateDialogueProfileAllowsMixedTTS(t *testing.T) {
-	cfg := Config{Services: ServicesConfig{TTS: map[string]TTSService{
-		EdgeTTSServiceName:  {},
-		AzureTTSServiceName: {},
-	}}}
+	cfg := Config{
+		Services: ServicesConfig{TTS: map[string]TTSService{
+			EdgeTTSServiceName:  {},
+			AzureTTSServiceName: {},
+		}},
+		Defaults: DefaultsConfig{Generation: GenerationConfig{DialogueProfile: "mixed"}},
+	}
 	profile := DialogueProfile{
 		Rate: "+0%", Volume: "+0%", Pitch: "+0Hz",
 		Speakers: []SpeakerConfig{
@@ -503,7 +528,10 @@ func TestValidateDialogueProfileAllowsMixedTTS(t *testing.T) {
 }
 
 func TestValidateDialogueProfileMultiTalker(t *testing.T) {
-	cfg := Config{Services: ServicesConfig{TTS: map[string]TTSService{AzureTTSServiceName: {}}}}
+	cfg := Config{
+		Services: ServicesConfig{TTS: map[string]TTSService{AzureTTSServiceName: {}}},
+		Defaults: DefaultsConfig{Generation: GenerationConfig{DialogueProfile: "multi"}},
+	}
 	valid := DialogueProfile{
 		Rate: "+0%", Volume: "+0%", Pitch: "+0Hz",
 		Speakers: []SpeakerConfig{
