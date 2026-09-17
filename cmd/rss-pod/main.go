@@ -45,6 +45,8 @@ func run() error {
 		return runMigrate(ctx, os.Args[2:])
 	case "poll":
 		return runPoll(ctx, os.Args[2:])
+	case "retry":
+		return runRetry(ctx, os.Args[2:])
 	case "serve":
 		return runServe(ctx, os.Args[2:])
 	case "worker":
@@ -148,6 +150,41 @@ func runPoll(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runRetry(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("retry", flag.ContinueOnError)
+	configPath := flags.String("config", "config.yaml", "configuration file")
+	sourcesValue := flags.String("sources", "", "comma-separated source IDs, or all")
+	limit := flags.Int("limit", 50, "maximum failed episodes to re-queue")
+	jsonOutput := flags.Bool("json", false, "print JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	sources, err := app.ParsePollSources(cfg, *sourcesValue)
+	if err != nil {
+		return err
+	}
+	retried, err := app.RetryFailedEpisodes(ctx, cfg, sources, *limit)
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(retried)
+	}
+	for _, episode := range retried {
+		fmt.Printf("retried episode=%s job=%s job_id=%d\n", episode.EpisodeID, episode.JobKind, episode.JobID)
+	}
+	if len(retried) == 0 {
+		fmt.Println("no failed episodes found")
+	}
+	return nil
+}
+
 func runCheck(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	configPath := flags.String("config", "config.yaml", "configuration file")
@@ -186,6 +223,7 @@ func usage() {
   check    validate configuration and external services
   migrate  apply River and application database migrations
   poll     explicitly enqueue one or more source polls
+  retry    re-queue failed episodes at the stage that failed
   serve    run the HTTP service only
   worker   run selected River queues only
   run      run the HTTP service and all River queues`)

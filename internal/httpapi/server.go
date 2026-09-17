@@ -348,44 +348,16 @@ func (s *Server) retryEpisode(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
-	var status string
-	var documents, turns int
-	err = tx.QueryRow(r.Context(), `
-		SELECT e.status,
-		       (SELECT count(*) FROM documents d WHERE d.episode_id = e.id),
-		       (SELECT count(*) FROM script_turns t WHERE t.episode_id = e.id)
-		FROM episodes e WHERE e.id = $1 FOR UPDATE
-	`, id).Scan(&status, &documents, &turns)
+	result, err := jobs.RetryEpisodeLocked(r.Context(), tx, s.river, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "episode not found")
 		return
 	}
+	if errors.Is(err, jobs.ErrEpisodeNotFailed) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if status != "failed" {
-		writeError(w, http.StatusConflict, "only failed episodes can be retried")
-		return
-	}
-
-	var args river.JobArgs
-	switch {
-	case documents == 0:
-		args = jobs.ResolveContentArgs{EpisodeID: id.String()}
-	case turns == 0:
-		args = jobs.GenerateScriptArgs{EpisodeID: id.String()}
-	default:
-		args = jobs.GenerateTTSArgs{EpisodeID: id.String()}
-	}
-	inserted, err := s.river.InsertTx(r.Context(), tx, args, nil)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if _, err := tx.Exec(r.Context(), `
-		UPDATE episodes SET status = 'queued', error = '', updated_at = now() WHERE id = $1
-	`, id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -394,9 +366,9 @@ func (s *Server) retryEpisode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"episode_id": id,
-		"job_id":     inserted.Job.ID,
-		"job_kind":   args.Kind(),
+		"episode_id": result.EpisodeID,
+		"job_id":     result.JobID,
+		"job_kind":   result.JobKind,
 		"status":     "queued",
 	})
 }
