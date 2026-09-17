@@ -1,0 +1,38 @@
+# 内网 Jenkins 专用镜像：agent 容器里已自带 Go 工具链，镜像里只打包编译产物。
+#
+# Jenkins 构建步骤：
+#   go build -o rss-pod-jenkins -trimpath -ldflags="-s -w" ./cmd/rss-pod
+#   docker build -t rss-pod:latest -f Dockerfile-jenkins .
+#
+# 与根目录 Dockerfile 的区别（那份是给 GitHub Actions / buildx 多平台构建用的）：
+#   - 不使用 BuildKit 专有语法（FROM --platform=$BUILDPLATFORM、RUN --mount=type=cache），
+#     以兼容 Jenkins agent 上的旧版 builder（否则会报 failed to parse platform : ""）
+#   - 单阶段：不在 Docker 内编译，直接 COPY agent 上编译好的二进制
+#   - 产物名用 rss-pod-jenkins：.dockerignore 里有一条 rss-pod，会把同名文件排除出构建上下文
+#   - web/ 静态资源已由 go:embed 打进二进制，无需 COPY；prompts/ 需要随镜像分发
+
+# 与 leopold-spider 保持一致的 glibc 基础镜像：即使 agent 上的 go build 产出动态链接
+# 二进制的 glibc 版本也能直接运行。若固定用 CGO_ENABLED=0 编译，可换成 alpine:3.23。
+FROM frolvlad/alpine-glibc:alpine-3.17_glibc-2.34
+
+RUN echo "http://mirrors.aliyun.com/alpine/v3.17/main/" > /etc/apk/repositories \
+    && echo "http://mirrors.aliyun.com/alpine/v3.17/community/" >> /etc/apk/repositories \
+    && apk update && apk add --no-cache ca-certificates tzdata \
+    && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && addgroup -S rsspod \
+    && adduser -S -G rsspod rsspod
+
+ENV LANG=C.UTF-8 \
+    TZ=Asia/Shanghai
+
+WORKDIR /app
+COPY rss-pod-jenkins /usr/local/bin/rss-pod
+COPY config.example.yaml /app/config.yaml
+COPY prompts /app/prompts
+
+# 运行期只读写 Postgres / MinIO，不需要本地可写目录
+USER rsspod
+EXPOSE 8080
+ENTRYPOINT ["rss-pod"]
+CMD ["run", "--config", "/app/config.yaml"]
