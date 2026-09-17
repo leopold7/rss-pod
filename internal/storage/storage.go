@@ -64,6 +64,31 @@ func (c *Client) put(ctx context.Context, bucket, key, contentType string, data 
 	return nil
 }
 
+// RemovePrivate deletes objects from the private bucket. Deleting a key that no
+// longer exists succeeds, so already removed segments are safe to pass in.
+func (c *Client) RemovePrivate(ctx context.Context, keys ...string) error {
+	return c.remove(ctx, c.config.PrivateBucket, keys...)
+}
+
+// RemoveMedia deletes objects from the media bucket.
+func (c *Client) RemoveMedia(ctx context.Context, keys ...string) error {
+	return c.remove(ctx, c.config.MediaBucket, keys...)
+}
+
+func (c *Client) remove(ctx context.Context, bucket string, keys ...string) error {
+	operationCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if err := c.client.RemoveObject(operationCtx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+			return fmt.Errorf("remove s3://%s/%s: %w", bucket, key, err)
+		}
+	}
+	return nil
+}
+
 func (c *Client) GetPrivate(ctx context.Context, key string) ([]byte, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()

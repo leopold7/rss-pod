@@ -209,6 +209,7 @@ The main commands are:
 | `poll` | Explicitly enqueue one or more source polls |
 | `retry` | Re-queue failed episodes at the stage that failed |
 | `stop` | Cancel every in-flight job and stop its work |
+| `delete` | Purge failed episodes, their content, and poll records |
 | `serve` | Run only the HTTP player and management listeners |
 | `worker` | Run selected River queues |
 | `run` | Run the HTTP service, scheduler, and every queue |

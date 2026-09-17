@@ -49,6 +49,8 @@ func run() error {
 		return runRetry(ctx, os.Args[2:])
 	case "stop":
 		return runStop(ctx, os.Args[2:])
+	case "delete":
+		return runDelete(ctx, os.Args[2:])
 	case "serve":
 		return runServe(ctx, os.Args[2:])
 	case "worker":
@@ -211,6 +213,85 @@ func runStop(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runDelete(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("delete", flag.ContinueOnError)
+	configPath := flags.String("config", "config.yaml", "configuration file")
+	sourcesValue := flags.String("sources", "", "comma-separated source IDs, or all")
+	limit := flags.Int("limit", 200, "maximum failed episodes to delete")
+	dryRun := flags.Bool("dry-run", false, "report what would be deleted without deleting")
+	ignore := flags.Bool("ignore", false, "remember deleted items so later polls skip them")
+	listIgnored := flags.Bool("list-ignored", false, "list remembered items instead of deleting")
+	unignore := flags.Bool("unignore", false, "forget remembered items instead of deleting")
+	jsonOutput := flags.Bool("json", false, "print JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *listIgnored && *unignore {
+		return errors.New("--list-ignored and --unignore cannot be combined")
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	sources, err := app.ParsePollSources(cfg, *sourcesValue)
+	if err != nil {
+		return err
+	}
+
+	if *listIgnored {
+		items, err := app.ListIgnoredFeedItems(ctx, cfg, sources, *limit)
+		if err != nil {
+			return err
+		}
+		if *jsonOutput {
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(items)
+		}
+		for _, item := range items {
+			fmt.Printf("%s %s %s\n", item.SourceID, item.ExternalID, item.Title)
+		}
+		fmt.Printf("ignored=%d\n", len(items))
+		return nil
+	}
+	if *unignore {
+		forgot, err := app.ForgetIgnoredFeedItems(ctx, cfg, sources, *dryRun)
+		if err != nil {
+			return err
+		}
+		if *dryRun {
+			fmt.Printf("would forget=%d\n", forgot)
+			return nil
+		}
+		fmt.Printf("forgot=%d\n", forgot)
+		return nil
+	}
+
+	result, err := app.DeleteFailedTasks(ctx, cfg, sources, app.DeleteFailedTasksOptions{
+		Limit:  *limit,
+		DryRun: *dryRun,
+		Ignore: *ignore,
+	})
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	verb := "deleted"
+	if result.DryRun {
+		verb = "would delete"
+	}
+	fmt.Printf("%s episodes=%d feed_items=%d objects=%d jobs=%d runs=%d ignored=%d\n",
+		verb, result.Episodes, result.FeedItems, result.Objects, result.Jobs, result.Runs, result.Ignored)
+	if !*ignore && !*dryRun && result.Episodes > 0 {
+		fmt.Println("hint: pass --ignore to skip these items in later polls")
+	}
+	return nil
+}
+
 func runCheck(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	configPath := flags.String("config", "config.yaml", "configuration file")
@@ -251,6 +332,7 @@ func usage() {
   poll     explicitly enqueue one or more source polls
   retry    re-queue failed episodes at the stage that failed
   stop     cancel every in-flight job and stop their work
+  delete   purge failed episodes, their content, and poll records
   serve    run the HTTP service only
   worker   run selected River queues only
   run      run the HTTP service and all River queues`)

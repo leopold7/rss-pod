@@ -98,6 +98,16 @@ CREATE INDEX IF NOT EXISTS feed_items_source_published_idx
 CREATE INDEX IF NOT EXISTS feed_items_discovered_idx
     ON feed_items (discovered_at, id);
 
+-- Items an operator deleted are remembered here so later polls skip them
+-- instead of generating the same episode again.
+CREATE TABLE IF NOT EXISTS ignored_feed_items (
+    source_id   text NOT NULL,
+    external_id text NOT NULL,
+    title       text NOT NULL DEFAULT '',
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (source_id, external_id)
+);
+
 CREATE TABLE IF NOT EXISTS episodes (
     id             uuid PRIMARY KEY,
     source_id      text NOT NULL,

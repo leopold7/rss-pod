@@ -96,10 +96,19 @@ func (w *PollSourceWorker) poll(ctx context.Context, args PollSourceArgs) error 
 	}
 	defer tx.Rollback(ctx)
 
+	ignored, err := ignoredFeedItemIDs(ctx, tx, source.ID)
+	if err != nil {
+		return err
+	}
 	itemsNew := 0
 	itemsExisting := 0
 	for _, item := range feed.Items[:limit] {
 		externalID := feedItemID(source.ID, item)
+		if _, skip := ignored[externalID]; skip {
+			// Deleted by an operator, and not meant to be generated again.
+			itemsExisting++
+			continue
+		}
 		var publishedAt *time.Time
 		if item.PublishedParsed != nil {
 			publishedAt = item.PublishedParsed
@@ -185,6 +194,28 @@ func (w *PollSourceWorker) poll(ctx context.Context, args PollSourceArgs) error 
 		return fmt.Errorf("commit source run: %w", err)
 	}
 	return nil
+}
+
+// ignoredFeedItemIDs loads the external IDs an operator deleted for this source
+// so a poll can skip them without storing them again.
+func ignoredFeedItemIDs(ctx context.Context, tx pgx.Tx, sourceID string) (map[string]struct{}, error) {
+	rows, err := tx.Query(ctx, `SELECT external_id FROM ignored_feed_items WHERE source_id = $1`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("query ignored feed items: %w", err)
+	}
+	defer rows.Close()
+	ignored := make(map[string]struct{})
+	for rows.Next() {
+		var externalID string
+		if err := rows.Scan(&externalID); err != nil {
+			return nil, fmt.Errorf("scan ignored feed item: %w", err)
+		}
+		ignored[externalID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ignored feed items: %w", err)
+	}
+	return ignored, nil
 }
 
 func feedItemID(sourceID string, item *gofeed.Item) string {
