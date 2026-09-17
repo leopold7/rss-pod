@@ -241,7 +241,9 @@ ghcr.io/synrise25/rss-pod
 Crawl4AI 支持 `md`（默认，调用 `/md`）和 `crawl`（调用 `/crawl`）两种模式。`filter`
 只在 `md` 模式下选择 `raw` 或 `fit`；`crawl` 模式必须配置一个 transform，避免未处理的
 HTML 被直接送入 LLM。
-`services.content.jina` 与 `services.content.crawl4ai` 提供全局默认值；source 可以在
+`services.content.jina` 与 `services.content.crawl4ai` 提供全局默认值；其中
+`services.content.jina.base_url` 未填写或为空时回退到内置默认值 `https://r.jina.ai`，
+可通过 `JINA_BASE_URL` 指向自建 Jina，无需修改配置文件。source 可以在
 `content.jina` 或 `content.crawl4ai` 下覆盖对应 service 的任意字段，包括显式使用空字符串
 关闭全局代理。建议凭据覆盖仍通过 `env://` 注入。
 

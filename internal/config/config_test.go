@@ -204,6 +204,44 @@ func TestLoadTreatsUnsetEnvironmentReferenceAsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadJinaBaseURLDefaultAndEnvironmentOverride(t *testing.T) {
+	const name = "RSS_POD_TEST_JINA_BASE_URL"
+	os.Unsetenv(name)
+	data := strings.Replace(minimalConfig, "base_url: https://r.jina.ai", "base_url: env://"+name, 1)
+	if data == minimalConfig {
+		t.Fatal("test fixture does not contain the Jina base URL")
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Services.Content.Jina.BaseURL; got != DefaultJinaBaseURL {
+		t.Fatalf("Jina base URL = %q, want built-in default %q", got, DefaultJinaBaseURL)
+	}
+
+	t.Setenv(name, "https://jina.internal.example.com")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Services.Content.Jina.BaseURL; got != "https://jina.internal.example.com" {
+		t.Fatalf("Jina base URL = %q, want environment override", got)
+	}
+}
+
+func TestApplyDefaultsFillsBlankJinaBaseURL(t *testing.T) {
+	cfg := &Config{Services: ServicesConfig{Content: ContentServices{Jina: JinaService{BaseURL: "   "}}}}
+	cfg.applyDefaults()
+	if got := cfg.Services.Content.Jina.BaseURL; got != DefaultJinaBaseURL {
+		t.Fatalf("Jina base URL = %q, want built-in default %q", got, DefaultJinaBaseURL)
+	}
+}
+
 func TestHTTPManagementAddressDefaultsToLoopback(t *testing.T) {
 	if got := (HTTPConfig{}).ManagementAddress(); got != "127.0.0.1:8081" {
 		t.Fatalf("ManagementAddress() = %q, want 127.0.0.1:8081", got)

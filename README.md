@@ -277,6 +277,9 @@ Crawl4AI supports `md` mode (the default, using `/md`) and `crawl` mode (using
 `/crawl`). `filter` selects `raw` or `fit` only in `md` mode; `crawl` mode
 requires a transform so unprocessed HTML is never sent directly to the LLM.
 `services.content.jina` and `services.content.crawl4ai` provide global defaults.
+`services.content.jina.base_url` falls back to the built-in default
+`https://r.jina.ai` when it is unset or empty; point `JINA_BASE_URL` at your own
+Jina deployment to replace it without editing the config file.
 A source may override any corresponding service field under
 `content.jina` or `content.crawl4ai`, including an explicit empty proxy. Keep
 credential overrides in `env://` references.

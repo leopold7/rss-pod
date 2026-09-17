@@ -83,7 +83,11 @@ services:
   # source 可在 content.jina 或 content.crawl4ai 下覆盖以下任意字段；未填写的字段继承这里的默认值。
   content:
     jina:
-      base_url: https://r.jina.ai
+      # Unset or empty falls back to the built-in default https://r.jina.ai.
+      # 留空或未设置时回退到内置默认值 https://r.jina.ai。
+      # Point JINA_BASE_URL at your own Jina instance to replace the default.
+      # 通过 JINA_BASE_URL 指向自建 Jina 实例即可替换默认值。
+      base_url: env://JINA_BASE_URL
       api_key: env://JINA_API_KEY
       proxy: env://JINA_PROXY
       timeout: 45s

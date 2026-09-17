@@ -30,6 +30,11 @@ const (
 	DefaultStorageOperationTimeout = 2 * time.Minute
 )
 
+// DefaultJinaBaseURL is the publishable fallback applied when
+// services.content.jina.base_url is missing or resolves to an empty value.
+// Deployments point JINA_BASE_URL at their own Jina instance to replace it.
+const DefaultJinaBaseURL = "https://r.jina.ai"
+
 type Config struct {
 	Admin            AdminConfig                `yaml:"-" json:"-"`
 	Version          int                        `yaml:"version"`
@@ -423,10 +428,20 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
 	cfg.Admin = AdminConfig{TOTPSecret: os.Getenv("RSS_POD_ADMIN_TOTP_SECRET")}
+	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// applyDefaults fills publishable fallbacks for optional service settings so an
+// env:// reference can stay unset (for example JINA_BASE_URL) and still resolve
+// to a working value. Required fields are still enforced by Validate.
+func (c *Config) applyDefaults() {
+	if strings.TrimSpace(c.Services.Content.Jina.BaseURL) == "" {
+		c.Services.Content.Jina.BaseURL = DefaultJinaBaseURL
+	}
 }
 
 func resolveEnvironment(node *yaml.Node) error {
