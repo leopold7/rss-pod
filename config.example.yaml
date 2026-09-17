@@ -17,8 +17,10 @@ runtime:
   database:
     type: postgres
     # An env:// reference is substituted as a plain scalar, so typed fields such as
-    # port and force_path_style can be read from the environment as well.
-    # env:// 引用按普通标量替换，因此 port、force_path_style 等类型字段也可来自环境变量。
+    # port and force_path_style can be read from the environment as well. An unset
+    # variable resolves to an empty value; required fields are then caught by validation.
+    # env:// 引用按普通标量替换，因此 port、force_path_style 等类型字段也可来自环境变量；
+    # 变量未设置时按空值处理，必填字段仍由配置校验兜底报错。
     host: env://DATABASE_HOST
     port: 5432
     name: rsspod
@@ -123,6 +125,9 @@ services:
       receive_timeout: 120s
 
     azure:
+      # Only required when a dialogue profile uses an azure: voice; drop this whole
+      # block if every speaker is edge-based.
+      # 仅当某个 dialogue profile 使用了 azure: 语音时才需要配置；若所有说话人都用 edge，可整块删除。
       # Leave empty to derive the standard global Azure endpoint from region.
       # 留空时由 region 生成标准全球 Azure 地址。
       # For Azure China or custom routes, set the full speech synthesis endpoint.

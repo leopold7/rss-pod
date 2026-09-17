@@ -184,15 +184,23 @@ func TestLoadResolvesTypedEnvironmentValues(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsUnsetEnvironmentReference(t *testing.T) {
+func TestLoadTreatsUnsetEnvironmentReferenceAsEmpty(t *testing.T) {
+	const name = "RSS_POD_MISSING_PASSWORD"
+	os.Unsetenv(name)
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	data := strings.Replace(minimalConfig, "port: 5432", "port: env://RSS_POD_MISSING_PORT", 1)
+	data := strings.Replace(minimalConfig, "password: PASSWORD", "password: env://"+name, 1)
+	if data == minimalConfig {
+		t.Fatal("test fixture does not contain the password field")
+	}
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "RSS_POD_MISSING_PORT is not set") {
-		t.Fatalf("Load() error = %v, want unset environment variable error", err)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Runtime.Database.Password != "" {
+		t.Fatalf("database password = %q, want empty", cfg.Runtime.Database.Password)
 	}
 }
 
@@ -393,6 +401,34 @@ func TestLoadRejectsInvalidTTSTimeouts(t *testing.T) {
 				t.Fatalf("Load() error = %v, want %s validation error", err, test.field)
 			}
 		})
+	}
+}
+
+func TestValidateTTSServicesRequiresAzureKeyOnlyWhenUsed(t *testing.T) {
+	azure := TTSService{
+		Region:         "southeastasia",
+		OutputFormat:   "audio-24khz-48kbitrate-mono-mp3",
+		ConnectTimeout: "1s",
+		ReceiveTimeout: "2s",
+	}
+	cfg := Config{Services: ServicesConfig{TTS: map[string]TTSService{
+		EdgeTTSServiceName:  {ConnectTimeout: "1s", ReceiveTimeout: "2s"},
+		AzureTTSServiceName: azure,
+	}}}
+	if err := cfg.validateTTSServices(); err != nil {
+		t.Fatalf("unused azure service without api_key rejected: %v", err)
+	}
+
+	cfg.DialogueProfiles = map[string]DialogueProfile{
+		"azure-profile": {
+			Rate: "+0%", Volume: "+0%", Pitch: "+0Hz",
+			Speakers: []SpeakerConfig{
+				{ID: "host", Name: "Host", Role: "Host role", Voice: "azure:zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural"},
+			},
+		},
+	}
+	if err := cfg.validateTTSServices(); err == nil || !strings.Contains(err.Error(), "api_key must not be empty") {
+		t.Fatalf("validateTTSServices() error = %v, want azure api_key requirement", err)
 	}
 }
 

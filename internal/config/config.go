@@ -435,10 +435,10 @@ func resolveEnvironment(node *yaml.Node) error {
 		if name == "" {
 			return errors.New("invalid empty env reference")
 		}
-		value, ok := os.LookupEnv(name)
-		if !ok {
-			return fmt.Errorf("environment variable %s is not set", name)
-		}
+		// Unset variables resolve to an empty value instead of failing: every
+		// env:// reference is optional, and required fields are still enforced
+		// by Config.Validate once the placeholder has been cleared.
+		value := os.Getenv(name)
 		// An env reference is written as a YAML string, so the substituted text
 		// must be re-resolved for typed fields: DATABASE_PORT=5432 has to satisfy
 		// an int field instead of failing with "cannot unmarshal !!str".
@@ -598,15 +598,21 @@ func (c *Config) validateTTSServices() error {
 	if len(c.Services.TTS) == 0 {
 		return errors.New("services.tts must contain at least one service")
 	}
+	// A declared TTS service only needs credentials when a dialogue profile
+	// actually speaks through it, so an unused azure block does not force an
+	// API key onto deployments whose voices are all edge-based.
+	referenced := c.referencedTTSServices()
 	for name, service := range c.Services.TTS {
 		switch name {
 		case EdgeTTSServiceName:
 		case AzureTTSServiceName:
-			if strings.TrimSpace(service.APIKey) == "" {
-				return errors.New("services.tts azure api_key must not be empty")
-			}
-			if strings.TrimSpace(service.Endpoint) == "" && strings.TrimSpace(service.Region) == "" {
-				return errors.New("services.tts azure region must not be empty when endpoint is not set")
+			if referenced[name] {
+				if strings.TrimSpace(service.APIKey) == "" {
+					return errors.New("services.tts azure api_key must not be empty when a dialogue profile uses an azure voice")
+				}
+				if strings.TrimSpace(service.Endpoint) == "" && strings.TrimSpace(service.Region) == "" {
+					return errors.New("services.tts azure region must not be empty when a dialogue profile uses an azure voice")
+				}
 			}
 			if strings.TrimSpace(service.Endpoint) != "" {
 				if err := validateURL("services.tts azure endpoint", service.Endpoint); err != nil {
@@ -640,6 +646,23 @@ func (c *Config) validateTTSServices() error {
 		}
 	}
 	return nil
+}
+
+// referencedTTSServices reports which TTS services any dialogue profile voice
+// speaks through. Voice syntax errors are ignored here because they are
+// reported by validateDialogueProfile.
+func (c *Config) referencedTTSServices() map[string]bool {
+	referenced := make(map[string]bool)
+	for _, profile := range c.DialogueProfiles {
+		for _, speaker := range profile.Speakers {
+			voice, err := ParseSpeakerVoice(speaker.Voice)
+			if err != nil {
+				continue
+			}
+			referenced[voice.Service] = true
+		}
+	}
+	return referenced
 }
 
 func (c *Config) validateGeneration(field string, generation GenerationConfig) error {
