@@ -177,6 +177,7 @@ Markdown 语法；出于安全考虑，Markdown 中的原始 HTML 不会执行�
 | `migrate` | 执行应用及 River 数据库迁移 |
 | `poll` | 手动创建一个或多个来源拉取任务 |
 | `retry` | 从失败的阶段重新入队失败的节目 |
+| `stop` | 取消全部在途任务并中止它们的工作 |
 | `serve` | 只运行 HTTP 播放器和管理 listener |
 | `worker` | 只执行指定 River 队列 |
 | `run` | 同时运行 HTTP、调度器和全部队列 |

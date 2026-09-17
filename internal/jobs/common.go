@@ -24,10 +24,7 @@ func permanent(format string, args ...any) error {
 func finishEpisodeAttempt(ctx context.Context, pool *pgxpool.Pool, episodeID string, attempt, maxAttempts int, workErr error) error {
 	var permanentErr *permanentError
 	isPermanent := errors.As(workErr, &permanentErr)
-	status := "retrying"
-	if isPermanent || attempt >= maxAttempts {
-		status = "failed"
-	}
+	status := episodeAttemptStatus(ctx, attempt, maxAttempts, workErr)
 	updateCtx, cancel := episodeFailureUpdateContext(ctx)
 	defer cancel()
 	if _, err := pool.Exec(updateCtx, `
@@ -43,6 +40,19 @@ func finishEpisodeAttempt(ctx context.Context, pool *pgxpool.Pool, episodeID str
 
 func episodeFailureUpdateContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), episodeFailureUpdateTimeout)
+}
+
+// episodeAttemptStatus decides how an episode is recorded after a failed
+// attempt. A cancelled job context means the job was cancelled (the stop
+// command cancelled it, or the worker was asked to abort), so the episode
+// becomes failed: nothing will retry it, and `retry` can resume it later. A job
+// timeout is left as retrying because River runs the job again.
+func episodeAttemptStatus(ctx context.Context, attempt, maxAttempts int, workErr error) string {
+	var permanentErr *permanentError
+	if errors.As(workErr, &permanentErr) || attempt >= maxAttempts || errors.Is(ctx.Err(), context.Canceled) {
+		return "failed"
+	}
+	return "retrying"
 }
 
 type ResolveContentArgs struct {

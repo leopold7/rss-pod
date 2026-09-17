@@ -11,6 +11,7 @@ require (
 	github.com/mmcdole/gofeed v1.4.1
 	github.com/riverqueue/river v0.44.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.44.0
+	github.com/riverqueue/river/rivertype v0.44.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/yuin/goldmark v1.8.5
 	golang.org/x/net v0.58.0
@@ -33,7 +34,6 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/riverqueue/river/riverdriver v0.44.0 // indirect
 	github.com/riverqueue/river/rivershared v0.44.0 // indirect
-	github.com/riverqueue/river/rivertype v0.44.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect

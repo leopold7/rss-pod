@@ -47,6 +47,8 @@ func run() error {
 		return runPoll(ctx, os.Args[2:])
 	case "retry":
 		return runRetry(ctx, os.Args[2:])
+	case "stop":
+		return runStop(ctx, os.Args[2:])
 	case "serve":
 		return runServe(ctx, os.Args[2:])
 	case "worker":
@@ -185,6 +187,30 @@ func runRetry(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runStop(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("stop", flag.ContinueOnError)
+	configPath := flags.String("config", "config.yaml", "configuration file")
+	jsonOutput := flags.Bool("json", false, "print JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	result, err := app.StopRunningTasks(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+	fmt.Printf("stopped jobs=%d episodes=%d runs=%d\n", result.CancelledJobs, result.FailedEpisodes, result.FailedRuns)
+	return nil
+}
+
 func runCheck(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("check", flag.ContinueOnError)
 	configPath := flags.String("config", "config.yaml", "configuration file")
@@ -224,6 +250,7 @@ func usage() {
   migrate  apply River and application database migrations
   poll     explicitly enqueue one or more source polls
   retry    re-queue failed episodes at the stage that failed
+  stop     cancel every in-flight job and stop their work
   serve    run the HTTP service only
   worker   run selected River queues only
   run      run the HTTP service and all River queues`)

@@ -208,6 +208,7 @@ The main commands are:
 | `migrate` | Apply application and River database migrations |
 | `poll` | Explicitly enqueue one or more source polls |
 | `retry` | Re-queue failed episodes at the stage that failed |
+| `stop` | Cancel every in-flight job and stop its work |
 | `serve` | Run only the HTTP player and management listeners |
 | `worker` | Run selected River queues |
 | `run` | Run the HTTP service, scheduler, and every queue |

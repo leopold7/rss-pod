@@ -38,6 +38,35 @@ func TestEpisodeFailureUpdateContextSurvivesParentCancellation(t *testing.T) {
 	}
 }
 
+func TestEpisodeAttemptStatus(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	timedOut, cancelTimeout := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelTimeout()
+
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		attempt     int
+		maxAttempts int
+		workErr     error
+		want        string
+	}{
+		{name: "retryable error retries", ctx: context.Background(), attempt: 1, maxAttempts: 5, workErr: errors.New("network"), want: "retrying"},
+		{name: "final attempt fails", ctx: context.Background(), attempt: 5, maxAttempts: 5, workErr: errors.New("network"), want: "failed"},
+		{name: "permanent error fails immediately", ctx: context.Background(), attempt: 1, maxAttempts: 5, workErr: permanent("bad configuration"), want: "failed"},
+		{name: "cancelled job fails", ctx: cancelled, attempt: 1, maxAttempts: 5, workErr: context.Canceled, want: "failed"},
+		{name: "timed out job keeps retrying", ctx: timedOut, attempt: 1, maxAttempts: 5, workErr: context.DeadlineExceeded, want: "retrying"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := episodeAttemptStatus(test.ctx, test.attempt, test.maxAttempts, test.workErr); got != test.want {
+				t.Fatalf("episodeAttemptStatus() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestGenerateTTSUsesFiveRiverAttempts(t *testing.T) {
 	if got := (GenerateTTSArgs{}).InsertOpts().MaxAttempts; got != 5 {
 		t.Fatalf("GenerateTTS River max attempts = %d, want 5", got)
