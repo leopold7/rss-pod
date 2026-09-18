@@ -57,7 +57,7 @@ func Worker(ctx context.Context, cfg *config.Config, queueNames []string) error 
 	}
 	slog.Info("worker started", "queues", queueNames)
 	<-ctx.Done()
-	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	stopCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
 	return client.Stop(stopCtx)
 }
@@ -77,7 +77,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("start River worker: %w", err)
 	}
 	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 		defer cancel()
 		if err := client.Stop(stopCtx); err != nil {
 			slog.Error("stop River worker", "error", err)
@@ -85,6 +85,39 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}()
 
 	return httpapi.New(cfg, pool, client).Run(ctx)
+}
+
+const (
+	// jobRescueLeeway is the grace period River waits past the job deadline
+	// before its job rescuer treats a running job as stuck. River's own default
+	// is one hour, which hides an interrupted job for far too long: a job whose
+	// worker was killed (SIGKILL, OOM, or a stop that ran out of time) keeps its
+	// episode in an in-progress status with no retry scheduled, so a poll-only
+	// episode waiting for a manual start looks stuck to the listener.
+	jobRescueLeeway = 5 * time.Minute
+
+	// softStopTimeout is how long a stopping worker lets its running jobs
+	// finish before River cancels their contexts. A job cancelled that way is
+	// put back into the queue without consuming an attempt, so the next start
+	// resumes it immediately instead of waiting for the job rescuer.
+	softStopTimeout = 20 * time.Second
+
+	// stopTimeout bounds how long the process waits for River to shut down. It
+	// must stay well above softStopTimeout, otherwise the process exits while
+	// jobs are still running and they only recover through the slower rescuer.
+	stopTimeout = time.Minute
+)
+
+// rescueStuckAfter returns the age at which a running job is considered stuck.
+// River requires the value to be at least the job timeout, so extending the
+// timeout also delays rescuing; lower runtime.jobs.timeout to recover stuck
+// jobs sooner.
+func rescueStuckAfter(jobTimeout time.Duration) time.Duration {
+	if jobTimeout <= 0 {
+		// No job deadline is configured, so keep River's own default.
+		return time.Hour
+	}
+	return jobTimeout + jobRescueLeeway
 }
 
 func newRiverClient(cfg *config.Config, pool *pgxpool.Pool, queueNames []string) (*river.Client[pgx.Tx], error) {
@@ -120,9 +153,11 @@ func newRiverClient(cfg *config.Config, pool *pgxpool.Pool, queueNames []string)
 	river.AddWorker(workers, generateTTSWorker)
 	river.AddWorker(workers, composeEpisodeWorker)
 	riverConfig := &river.Config{
-		Workers:           workers,
-		JobTimeout:        jobTimeout,
-		FetchPollInterval: fetchPollInterval,
+		Workers:              workers,
+		JobTimeout:           jobTimeout,
+		FetchPollInterval:    fetchPollInterval,
+		RescueStuckJobsAfter: rescueStuckAfter(jobTimeout),
+		SoftStopTimeout:      softStopTimeout,
 	}
 	if len(queueNames) > 0 {
 		riverConfig.Queues = make(map[string]river.QueueConfig, len(queueNames))

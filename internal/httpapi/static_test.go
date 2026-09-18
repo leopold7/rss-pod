@@ -114,6 +114,64 @@ func TestPlayerWebHandlerServesThemeToggleInsideHeaderActions(t *testing.T) {
 	}
 }
 
+func TestPlayerWebHandlerServesSettingsPanelLeftOfLanguageSwitcher(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/en", nil)
+	response := httptest.NewRecorder()
+	playerWebHandler().ServeHTTP(response, request)
+
+	body := response.Body.String()
+	settings := strings.Index(body, `id="settings-toggle"`)
+	panel := strings.Index(body, `id="settings-panel"`)
+	language := strings.Index(body, `id="language-switcher"`)
+	if settings < 0 || panel < 0 || language < 0 {
+		t.Fatalf("player shell is missing a settings control: toggle=%d panel=%d language=%d", settings, panel, language)
+	}
+	if settings > language {
+		t.Fatalf("settings button is not left of the language switcher: settings=%d language=%d", settings, language)
+	}
+	if panel < settings {
+		t.Fatalf("settings panel is not nested inside the settings menu: panel=%d settings=%d", panel, settings)
+	}
+	// The panel offers the theme preference and the list layout, which the
+	// player renders from these values.
+	for _, control := range []string{
+		`data-theme-mode="system"`,
+		`data-theme-mode="light"`,
+		`data-theme-mode="dark"`,
+		`data-display-mode="date"`,
+		`data-display-mode="category"`,
+	} {
+		if !strings.Contains(body, control) {
+			t.Fatalf("settings panel is missing %s", control)
+		}
+	}
+}
+
+func TestPlayerWebHandlerServesPlayerDrawerToggleInsidePlayerDock(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/en", nil)
+	response := httptest.NewRecorder()
+	playerWebHandler().ServeHTTP(response, request)
+
+	body := response.Body.String()
+	dock := strings.Index(body, `id="player-dock"`)
+	toggle := strings.Index(body, `id="player-drawer-toggle"`)
+	// The toast follows the dock, so it marks the end of the section.
+	toast := strings.Index(body, `id="toast"`)
+	if dock < 0 || toggle < 0 || toast < 0 {
+		t.Fatalf("player shell is missing the drawer control: dock=%d toggle=%d toast=%d", dock, toggle, toast)
+	}
+	if toggle < dock || toggle > toast {
+		t.Fatalf("drawer toggle is not inside the player dock: dock=%d toggle=%d toast=%d", dock, toggle, toast)
+	}
+	if !strings.Contains(body, `aria-controls="player-dock"`) {
+		t.Fatal("player drawer toggle does not name the dock it folds away")
+	}
+}
+
 func TestPlayerWebHandlerServesStageIcons(t *testing.T) {
 	t.Parallel()
 

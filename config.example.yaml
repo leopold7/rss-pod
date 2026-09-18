@@ -37,6 +37,11 @@ runtime:
     type: river
     # Total job deadline; TTS serially generates an episode, so keep this well above a single service timeout.
     # 整个 job 的总时限；TTS 会串行生成整集片段，因此应明显长于单次服务超时。
+    # A job whose worker is killed (SIGKILL, OOM, an ungraceful restart) stays "running" until
+    # River's rescuer picks it up, which happens after timeout + 5m. Lower this value to resume
+    # such stuck episodes sooner.
+    # 进程中途被杀（SIGKILL、OOM、非优雅重启）时，job 会一直停留在 running，直到 River 的救援
+    # 扫描接管：时间为 timeout + 5m。想更快恢复这类卡住的 episode，就调小该值。
     timeout: 30m
     # Fallback polling is only used when LISTEN/NOTIFY does not wake a queue; longer intervals reduce idle database queries.
     # 兜底轮询只在 LISTEN/NOTIFY 未唤醒队列时使用；增大间隔可减少空闲数据库查询。

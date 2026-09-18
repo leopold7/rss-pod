@@ -215,6 +215,23 @@ runtime:
     theme_toggle: false
 ```
 
+### Player settings
+
+A settings button left of the language switcher opens a panel that holds the
+player preferences which are stored in the current browser:
+
+- **Color theme**: follow the device, light, or dark. The panel and the header
+  switch drive the same stored choice, and `theme_toggle: false` hides both.
+- **Layout**: group the list by date, which is the default, or by feed. The
+  category mode lists one tab per feed instead of one tab per day and shows the
+  publish date of each article in place of the feed name, because the list only
+  ever covers three days.
+
+The player dock is a drawer as well. The handle in its top-right corner folds it
+down to a slim bar that keeps the play control and the current title, which hands
+the rest of the screen to the episode list. Like the other preferences, the
+state is stored in the current browser.
+
 ### Poll-only sources
 
 A source can be left to discovery only. Polling then stores new entries without

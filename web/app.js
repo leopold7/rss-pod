@@ -3,6 +3,10 @@ const RESUME_KEY = "rss-pod.resume-state";
 const DISMISSED_NOTICE_KEY = "rss-pod.dismissed-notice";
 const THEME_KEY = "rss-pod.theme";
 const THEME_MODES = ["system", "light", "dark"];
+const DISPLAY_KEY = "rss-pod.display-mode";
+const DISPLAY_MODES = ["date", "category"];
+const PLAYER_DRAWER_KEY = "rss-pod.player-drawer";
+const PLAYER_DRAWER_MODES = ["expanded", "collapsed"];
 const THEME_COLORS = { light: "#f4f9ff", dark: "#0b1420" };
 const prefersDarkMode = window.matchMedia("(prefers-color-scheme: dark)");
 const DEMO_AUDIO = "/demo.mp3";
@@ -23,8 +27,14 @@ const copy = {
     documentTitle: "Commute Podcasts",
     languageLabel: "Language",
     githubLabel: "View project on GitHub",
+    settingsLabel: "Settings",
+    settingsTitle: "Settings",
     themeLabel: "Color theme",
     themeModes: { system: "follows device", light: "light", dark: "dark" },
+    themeSettingLabel: "Color theme",
+    displaySettingLabel: "Layout",
+    displayModes: { date: "By date", category: "By feed" },
+    categoryTabsLabel: "Choose a feed",
     dateTabsLabel: "Choose a date",
     noticeLabel: "Notice",
     dismissNotice: "Dismiss notice",
@@ -38,12 +48,15 @@ const copy = {
     next: "Next episode",
     nowPlaying: "PLAYING",
     chooseEpisode: "Choose an episode",
+    collapsePlayer: "Fold the player away",
+    expandPlayer: "Show the full player",
     progressLabel: "Playback progress",
     speedLabel: "Speed",
     playbackSpeed: "Playback speed",
     loading: "Loading podcasts…",
     loadError: "Podcasts are unavailable right now. Please try again later.",
     empty: "No matching podcasts for this day",
+    emptyCategory: "No episodes for this feed in the last three days",
     allSources: "All",
     untitled: "Untitled episode",
     durationUnavailable: "Duration unavailable",
@@ -75,8 +88,14 @@ const copy = {
     documentTitle: "通勤播客",
     languageLabel: "语言",
     githubLabel: "在 GitHub 上查看项目",
+    settingsLabel: "设置",
+    settingsTitle: "设置管理",
     themeLabel: "配色主题",
-    themeModes: { system: "跟随系统", light: "浅色", dark: "深色" },
+    themeModes: { system: "跟随系统", light: "日间模式", dark: "暗黑模式" },
+    themeSettingLabel: "主题设置",
+    displaySettingLabel: "显示设置",
+    displayModes: { date: "按日期", category: "按分类" },
+    categoryTabsLabel: "选择分类",
     dateTabsLabel: "选择日期",
     noticeLabel: "通知",
     dismissNotice: "关闭通知",
@@ -90,12 +109,15 @@ const copy = {
     next: "下一条",
     nowPlaying: "正在播放",
     chooseEpisode: "选择一条播客开始播放",
+    collapsePlayer: "收起播放器",
+    expandPlayer: "展开播放器",
     progressLabel: "播放进度",
     speedLabel: "播放倍速",
     playbackSpeed: "播放速度",
     loading: "正在载入播客…",
     loadError: "暂时无法载入播客，请稍后重试",
     empty: "这一天还没有符合条件的播客",
+    emptyCategory: "该分类最近三天还没有内容",
     allSources: "全部",
     untitled: "未命名播客",
     durationUnavailable: "暂无播放时长",
@@ -170,6 +192,14 @@ const elements = {
   languageSwitcher: document.querySelector("#language-switcher"),
   languageLinks: [...document.querySelectorAll("[data-locale]")],
   githubLink: document.querySelector("#github-link"),
+  settingsToggle: document.querySelector("#settings-toggle"),
+  settingsPanel: document.querySelector("#settings-panel"),
+  settingsTitle: document.querySelector("#settings-title"),
+  settingsThemeSection: document.querySelector("#settings-theme-section"),
+  settingsThemeLabel: document.querySelector("#settings-theme-label"),
+  settingsDisplayLabel: document.querySelector("#settings-display-label"),
+  themeModeButtons: [...document.querySelectorAll("[data-theme-mode]")],
+  displayModeButtons: [...document.querySelectorAll("[data-display-mode]")],
   themeToggle: document.querySelector("#theme-toggle"),
   dateTabs: document.querySelector("#date-tabs"),
   noticeRegion: document.querySelector("#notice-region"),
@@ -193,6 +223,7 @@ const elements = {
   elapsedTime: document.querySelector("#elapsed-time"),
   remainingTime: document.querySelector("#remaining-time"),
   playerDock: document.querySelector("#player-dock"),
+  playerDrawerToggle: document.querySelector("#player-drawer-toggle"),
   nowPlayingLabel: document.querySelector("#now-playing-label"),
   speedLabel: document.querySelector("#speed-label"),
   speedLegend: document.querySelector("#speed-legend"),
@@ -203,9 +234,16 @@ const elements = {
 // The theme starts out following the device; the switch cycles through
 // system, light and dark, and a stored value keeps an explicit choice.
 let themePreference = readThemePreference();
+// The list groups by day unless the listener picked categories in the settings
+// panel. Both choices live in this browser for the current site.
+let displayMode = readDisplayPreference();
+// The player dock folds into a drawer so the list can take the screen back.
+let playerDrawer = readPlayerDrawerPreference();
 
 applyLocale();
 initTheme();
+initSettings();
+initPlayerDrawer();
 
 const dateOptions = createDateOptions();
 const state = {
@@ -290,8 +328,12 @@ async function loadPlayerConfig() {
     if (!response.ok) return;
     const payload = await response.json();
     elements.themeToggle.hidden = payload.theme_toggle === false;
+    elements.settingsThemeSection.hidden = payload.theme_toggle === false;
   } catch (error) {
     console.error("load player config", error);
+    // The demo page has no backend that could confirm a deployment hides the
+    // theme choice, so it keeps the control the way an unset option would.
+    if (isDemoMode()) elements.settingsThemeSection.hidden = false;
   }
 }
 
@@ -323,7 +365,7 @@ async function loadPlayer() {
   } catch (error) {
     console.error("load player", error);
     setStatus(copy.loadError);
-    renderDateTabs();
+    renderTabs();
     renderSourceFilters();
   }
 }
@@ -404,38 +446,81 @@ async function fetchPlayerData() {
 }
 
 function renderAll() {
-  renderDateTabs();
+  renderTabs();
   renderSourceFilters();
   renderEpisodeList();
+  renderDisplaySettings();
 }
 
-function renderDateTabs() {
+// The header row follows the display mode: dates pick a day, categories pick a
+// feed. Either way it lists what the API returned for the same three-day window.
+function renderTabs() {
+  const byCategory = displayMode === "category";
+  elements.dateTabs.classList.toggle("is-category", byCategory);
+  elements.dateTabs.setAttribute(
+    "aria-label",
+    byCategory ? copy.categoryTabsLabel : copy.dateTabsLabel,
+  );
   elements.dateTabs.replaceChildren();
+
+  if (byCategory) {
+    for (const source of [{ id: "all", name: copy.allSources }, ...state.sources]) {
+      elements.dateTabs.append(
+        createTab(
+          source.id,
+          source.name,
+          countEpisodesForSource(source.id),
+          state.activeSource === source.id,
+          () => {
+            state.activeSource = source.id;
+            renderAll();
+          },
+        ),
+      );
+    }
+    return;
+  }
+
   for (const option of state.dateOptions) {
-    const button = document.createElement("button");
-    button.className = "date-tab";
-    button.type = "button";
-    button.role = "tab";
-    button.dataset.date = option.key;
-    button.setAttribute("aria-selected", String(state.activeDate === option.key));
-
-    const label = document.createElement("span");
-    label.textContent = `${option.relativeLabel} ${option.monthDay}`;
-    const count = document.createElement("span");
-    count.className = "date-count";
-    count.textContent = String(countEpisodesForDate(option.key));
-    count.setAttribute("aria-label", copy.episodeCount(Number(count.textContent)));
-    button.append(label, count);
-
-    button.addEventListener("click", () => {
-      state.activeDate = option.key;
-      renderAll();
-    });
-    elements.dateTabs.append(button);
+    elements.dateTabs.append(
+      createTab(
+        option.key,
+        `${option.relativeLabel} ${option.monthDay}`,
+        countEpisodesForDate(option.key),
+        state.activeDate === option.key,
+        () => {
+          state.activeDate = option.key;
+          renderAll();
+        },
+      ),
+    );
   }
 }
 
+function createTab(key, label, count, selected, onSelect) {
+  const button = document.createElement("button");
+  button.className = "date-tab";
+  button.type = "button";
+  button.role = "tab";
+  button.dataset.tab = key;
+  button.setAttribute("aria-selected", String(selected));
+
+  const text = document.createElement("span");
+  text.textContent = label;
+  const badge = document.createElement("span");
+  badge.className = "date-count";
+  badge.textContent = String(count);
+  badge.setAttribute("aria-label", copy.episodeCount(count));
+  button.append(text, badge);
+
+  button.addEventListener("click", onSelect);
+  return button;
+}
+
 function renderSourceFilters() {
+  // The header tabs already list every feed in category mode, so the second
+  // row would only repeat them.
+  elements.sourceFilterSection.hidden = displayMode === "category";
   elements.sourceFilters.replaceChildren();
   const sources = [{ id: "all", name: copy.allSources }, ...state.sources];
   for (const source of sources) {
@@ -459,7 +544,7 @@ function renderEpisodeList() {
   elements.episodeList.replaceChildren();
   const episodes = visibleEpisodes();
   if (episodes.length === 0) {
-    setStatus(copy.empty);
+    setStatus(displayMode === "category" ? copy.emptyCategory : copy.empty);
     updateQueueButtons();
     return;
   }
@@ -497,7 +582,12 @@ function renderEpisodeList() {
       activateEpisode(episode);
     });
 
-    row.querySelector(".episode-source").textContent = sourceName(episode.sourceID);
+    // In category mode every row repeats the same feed, so that column carries
+    // the publish date instead of the feed name.
+    const source = row.querySelector(".episode-source");
+    source.classList.toggle("is-date", displayMode === "category");
+    source.textContent =
+      displayMode === "category" ? episodeDateLabel(episode) : sourceName(episode.sourceID);
     const title = row.querySelector(".episode-title");
     title.textContent = episode.title;
     title.title = episode.title;
@@ -870,10 +960,13 @@ function scrollCurrentEpisodeIntoView() {
 }
 
 function visibleEpisodes() {
+  const fromSource = (episode) =>
+    state.activeSource === "all" || episode.sourceID === state.activeSource;
+  // Category mode keeps the whole window and orders it by date, so a feed reads
+  // as one continuous list; date mode stays on the selected day.
+  if (displayMode === "category") return state.episodes.filter(fromSource);
   return state.episodes.filter(
-    (episode) =>
-      episode.dayKey === state.activeDate &&
-      (state.activeSource === "all" || episode.sourceID === state.activeSource),
+    (episode) => episode.dayKey === state.activeDate && fromSource(episode),
   );
 }
 
@@ -891,6 +984,27 @@ function countEpisodesForDate(key) {
   return state.episodes.filter((episode) => episode.dayKey === key).length;
 }
 
+function countEpisodesForSource(sourceID) {
+  return state.episodes.filter(
+    (episode) => sourceID === "all" || episode.sourceID === sourceID,
+  ).length;
+}
+
+// Only three days are ever listed, so the relative day is always accurate.
+function episodeDateLabel(episode) {
+  const option = state.dateOptions.find((candidate) => candidate.key === episode.dayKey);
+  const clock = formatClockTime(episode.publishedAt);
+  if (!option) return clock;
+  return clock ? `${option.relativeLabel} ${clock}` : option.relativeLabel;
+}
+
+function formatClockTime(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
 function sourceName(sourceID) {
   return state.sources.find((source) => source.id === sourceID)?.name || sourceID;
 }
@@ -901,7 +1015,17 @@ function applyLocale() {
   elements.languageSwitcher.setAttribute("aria-label", copy.languageLabel);
   elements.githubLink.setAttribute("aria-label", copy.githubLabel);
   elements.githubLink.title = copy.githubLabel;
-  elements.dateTabs.setAttribute("aria-label", copy.dateTabsLabel);
+  elements.settingsToggle.setAttribute("aria-label", copy.settingsLabel);
+  elements.settingsToggle.title = copy.settingsLabel;
+  elements.settingsTitle.textContent = copy.settingsTitle;
+  elements.settingsThemeLabel.textContent = copy.themeSettingLabel;
+  elements.settingsDisplayLabel.textContent = copy.displaySettingLabel;
+  for (const button of elements.themeModeButtons) {
+    button.textContent = copy.themeModes[button.dataset.themeMode];
+  }
+  for (const button of elements.displayModeButtons) {
+    button.textContent = copy.displayModes[button.dataset.displayMode];
+  }
   elements.noticeRegion.setAttribute("aria-label", copy.noticeLabel);
   elements.noticeDismiss.setAttribute("aria-label", copy.dismissNotice);
   elements.noticeDismiss.title = copy.dismissNotice;
@@ -926,11 +1050,22 @@ function applyLocale() {
     const targetPath = link.dataset.locale === "zh-CN" ? "/zh-cn" : "/en";
     link.href = `${isAdminPage ? "/admin" : ""}${targetPath}${window.location.search}${window.location.hash}`;
   }
+  applyPlayerDrawer();
 }
 
 function readThemePreference() {
   const stored = readStoredString(THEME_KEY);
   return THEME_MODES.includes(stored) ? stored : "system";
+}
+
+function readDisplayPreference() {
+  const stored = readStoredString(DISPLAY_KEY);
+  return DISPLAY_MODES.includes(stored) ? stored : "date";
+}
+
+function readPlayerDrawerPreference() {
+  const stored = readStoredString(PLAYER_DRAWER_KEY);
+  return PLAYER_DRAWER_MODES.includes(stored) ? stored : "expanded";
 }
 
 function resolvedTheme() {
@@ -943,14 +1078,102 @@ function initTheme() {
   prefersDarkMode.addEventListener("change", () => {
     if (themePreference === "system") applyTheme();
   });
-  if (!elements.themeToggle) return;
-  elements.themeToggle.addEventListener("click", () => {
-    const next = THEME_MODES[(THEME_MODES.indexOf(themePreference) + 1) % THEME_MODES.length];
-    themePreference = next;
-    if (next === "system") removeStorage(THEME_KEY);
-    else writeStorage(THEME_KEY, next);
-    applyTheme();
+  if (elements.themeToggle) {
+    elements.themeToggle.addEventListener("click", () => {
+      const next = THEME_MODES[(THEME_MODES.indexOf(themePreference) + 1) % THEME_MODES.length];
+      setThemePreference(next);
+    });
+  }
+  for (const button of elements.themeModeButtons) {
+    button.addEventListener("click", () => setThemePreference(button.dataset.themeMode));
+  }
+}
+
+// The header switch and the settings panel drive the same preference, so the
+// stored value stays the single source of truth for both controls.
+function setThemePreference(mode) {
+  if (!THEME_MODES.includes(mode)) return;
+  themePreference = mode;
+  if (mode === "system") removeStorage(THEME_KEY);
+  else writeStorage(THEME_KEY, mode);
+  applyTheme();
+}
+
+// The header button opens a panel of the preferences that have more than one
+// reasonable choice. It closes on a click outside it or on Escape, and it never
+// touches the list, so audio keeps playing while it is open.
+function initSettings() {
+  if (!elements.settingsToggle || !elements.settingsPanel) return;
+  elements.settingsToggle.addEventListener("click", () => {
+    if (elements.settingsPanel.hidden) openSettings();
+    else closeSettings();
   });
+  document.addEventListener("click", (event) => {
+    if (elements.settingsPanel.hidden) return;
+    if (event.target.closest("#settings-menu")) return;
+    closeSettings();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !elements.settingsPanel.hidden) closeSettings(true);
+  });
+  for (const button of elements.displayModeButtons) {
+    button.addEventListener("click", () => setDisplayMode(button.dataset.displayMode));
+  }
+  renderDisplaySettings();
+}
+
+function openSettings() {
+  elements.settingsPanel.hidden = false;
+  elements.settingsToggle.setAttribute("aria-expanded", "true");
+}
+
+function closeSettings(focusToggle = false) {
+  elements.settingsPanel.hidden = true;
+  elements.settingsToggle.setAttribute("aria-expanded", "false");
+  if (focusToggle) elements.settingsToggle.focus();
+}
+
+// Switching the display mode only re-groups the list; the loaded audio and the
+// playing episode are left alone.
+function setDisplayMode(mode) {
+  if (!DISPLAY_MODES.includes(mode) || mode === displayMode) {
+    renderDisplaySettings();
+    return;
+  }
+  displayMode = mode;
+  writeStorage(DISPLAY_KEY, mode);
+  renderAll();
+}
+
+function renderDisplaySettings() {
+  for (const button of elements.displayModeButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.displayMode === displayMode));
+  }
+}
+
+// The dock doubles as a drawer: folding it away hands the rows it used back to
+// the episode list. That is a choice about this screen rather than about the
+// deployment, so it is stored in the browser like the other preferences.
+function initPlayerDrawer() {
+  applyPlayerDrawer();
+  if (!elements.playerDrawerToggle) return;
+  elements.playerDrawerToggle.addEventListener("click", () => {
+    playerDrawer = playerDrawer === "collapsed" ? "expanded" : "collapsed";
+    writeStorage(PLAYER_DRAWER_KEY, playerDrawer);
+    applyPlayerDrawer();
+  });
+}
+
+function applyPlayerDrawer() {
+  const collapsed = playerDrawer === "collapsed";
+  // The attribute drives both the shell rows and the compact dock layout.
+  if (collapsed) document.documentElement.dataset.playerDrawer = "collapsed";
+  else delete document.documentElement.dataset.playerDrawer;
+  if (!elements.playerDrawerToggle) return;
+  const label = collapsed ? copy.expandPlayer : copy.collapsePlayer;
+  elements.playerDrawerToggle.setAttribute("aria-expanded", String(!collapsed));
+  elements.playerDrawerToggle.setAttribute("aria-label", label);
+  elements.playerDrawerToggle.title = label;
 }
 
 function applyTheme() {
@@ -958,6 +1181,9 @@ function applyTheme() {
   document.documentElement.dataset.theme = theme;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = THEME_COLORS[theme];
+  for (const button of elements.themeModeButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.themeMode === themePreference));
+  }
   if (!elements.themeToggle) return;
   elements.themeToggle.dataset.mode = themePreference;
   const label = `${copy.themeLabel}: ${copy.themeModes[themePreference]}`;
@@ -1047,7 +1273,7 @@ function selectInitialEpisode() {
     ? state.episodes.find((candidate) => candidate.id === state.pendingResume.episodeID)
     : null;
   const episode = resumeEpisode?.dayKey === latestEpisode.dayKey ? resumeEpisode : latestEpisode;
-  renderDateTabs();
+  renderTabs();
   renderSourceFilters();
   selectEpisode(episode, {
     resumeAt: episode === resumeEpisode ? state.pendingResume.currentTime || 0 : 0,
