@@ -105,6 +105,87 @@
                     aria-labelledby="settings-category-label"
                   ></select>
                 </section>
+                <!-- Personalisation groups the choices that only change how the
+                     list behaves once something has been listened to. -->
+                <section id="settings-personal-section" class="settings-section">
+                  <p id="settings-personal-label" class="settings-label">Personalization</p>
+                  <!-- Everything that only concerns the saved list sits in a
+                       group of its own; the choices that are about this browser
+                       rather than the saved list form the second group. -->
+                  <div class="settings-group">
+                    <p id="settings-later-group-label" class="settings-sublabel">Listen later</p>
+                    <div class="settings-switches">
+                      <div class="settings-switch-row">
+                        <span id="settings-later-auto-label" class="settings-switch-text"
+                          >Remove played episodes from Listen later</span
+                        >
+                        <button
+                          id="settings-later-auto"
+                          class="settings-switch"
+                          type="button"
+                          role="switch"
+                          aria-checked="false"
+                          aria-labelledby="settings-later-auto-label"
+                        >
+                          <span class="settings-switch-knob" aria-hidden="true"></span>
+                        </button>
+                      </div>
+                      <div class="settings-switch-row">
+                        <span id="settings-later-download-label" class="settings-switch-text"
+                          >Move a manual download into Listen later</span
+                        >
+                        <button
+                          id="settings-later-download"
+                          class="settings-switch"
+                          type="button"
+                          role="switch"
+                          aria-checked="false"
+                          aria-labelledby="settings-later-download-label"
+                        >
+                          <span class="settings-switch-knob" aria-hidden="true"></span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- The remaining choices form a second group, with the cache
+                       the last switch can build up inside it too. -->
+                  <div class="settings-group">
+                    <p id="settings-other-group-label" class="settings-sublabel">Other</p>
+                    <div class="settings-switches">
+                      <div class="settings-switch-row">
+                        <span id="settings-dim-label" class="settings-switch-text">Dim listened episodes</span>
+                        <button
+                          id="settings-dim"
+                          class="settings-switch"
+                          type="button"
+                          role="switch"
+                          aria-checked="false"
+                          aria-labelledby="settings-dim-label"
+                        >
+                          <span class="settings-switch-knob" aria-hidden="true"></span>
+                        </button>
+                      </div>
+                      <div class="settings-switch-row">
+                        <span id="settings-preload-label" class="settings-switch-text">Load the next episode locally</span>
+                        <button
+                          id="settings-preload"
+                          class="settings-switch"
+                          type="button"
+                          role="switch"
+                          aria-checked="false"
+                          aria-labelledby="settings-preload-label"
+                        >
+                          <span class="settings-switch-knob" aria-hidden="true"></span>
+                        </button>
+                      </div>
+                    </div>
+                    <!-- The cache summary only appears while local loading is on. -->
+                    <p id="settings-cache-summary" class="settings-cache" role="status" hidden></p>
+                    <button id="settings-cache-clear" class="settings-cache-clear" type="button" hidden>
+                      Clear cache
+                    </button>
+                  </div>
+                </section>
                 <!-- The header keeps these two controls on wide screens; on phones
                      they move in here so the header stays down to icon buttons. -->
                 <section id="settings-language-section" class="settings-section settings-mobile-only">
@@ -284,5 +365,9 @@
         <time class="episode-time"></time>
       </article>
     </template>
+
+    <!-- One menu serves both the "All" dropdown and the long-press actions of a
+         row. It hangs off the body because the tab row and the pages scroll. -->
+    <div id="popup-menu" class="popup-menu" role="menu" hidden></div>
   </body>
 </html>

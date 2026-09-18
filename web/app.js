@@ -8,14 +8,58 @@ const DISPLAY_MODES = ["date", "category"];
 const DEFAULT_CATEGORY_KEY = "rss-pod.default-category";
 const PLAYER_DRAWER_KEY = "rss-pod.player-drawer";
 const PLAYER_DRAWER_MODES = ["expanded", "collapsed"];
+const LISTEN_LATER_KEY = "rss-pod.listen-later";
+const LISTENED_KEY = "rss-pod.listened";
+const LATER_AUTO_REMOVE_KEY = "rss-pod.personal-later-auto-remove";
+const LATER_AUTO_DOWNLOAD_KEY = "rss-pod.personal-later-auto-download";
+const DIM_LISTENED_KEY = "rss-pod.personal-dim-listened";
+const PRELOAD_NEXT_KEY = "rss-pod.personal-preload-next";
+const AUDIO_CACHE_KEY = "rss-pod.audio-cache";
+const AUDIO_CACHE_NAME = "rss-pod-audio-v1";
 const THEME_COLORS = { light: "#f4f9ff", dark: "#0b1420" };
 const prefersDarkMode = window.matchMedia("(prefers-color-scheme: dark)");
+const smallViewport = window.matchMedia("(max-width: 700px)");
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const DEMO_AUDIO = "/demo.mp3";
 const MEDIA_ARTWORK = [
   { src: "/icons/favicon.png", sizes: "64x64", type: "image/png" },
   { src: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
 ];
 const DEFAULT_SEEK_OFFSET = 10;
+// The list keeps a slot of its own for the episodes saved in this browser.
+const LATER_SLOT = "later";
+// A long press has to be deliberate, and a finger that moves is scrolling or
+// paging rather than asking for the row actions.
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 8;
+const LONG_PRESS_CLICK_GUARD_MS = 700;
+const LISTENED_LIMIT = 500;
+const LISTEN_LATER_LIMIT = 200;
+// Only the episode that is playing and the one after it are worth holding
+// locally, so a handful of entries covers a queue and its lookahead.
+const AUDIO_CACHE_LIMIT = 5;
+// The marquee crawls rather than scrolls: about twenty pixels a second, which
+// is roughly one character per second, and a whole cycle stays under a minute.
+const MARQUEE_PIXELS_PER_SECOND = 20;
+const MARQUEE_MIN_SECONDS = 10;
+const MARQUEE_MAX_SECONDS = 60;
+// The crawl takes a third of the cycle in either direction.
+const MARQUEE_TRAVEL_SHARE = 0.34;
+
+// Material Symbols Rounded, the same set as the icons under web/icons.
+const ICON_PLAY =
+  "M320-258v-450q0-14 9-22t21-8q4 0 8 1t8 3l354 226q7 5 10.5 11t3.5 14q0 8-3.5 14T720-458L366-232q-4 2-8 3t-8 1q-12 0-21-8t-9-22Z";
+const ICON_PAUSE =
+  "M615-200q-24.75 0-42.37-17.63Q555-235.25 555-260v-440q0-24.75 17.63-42.38Q590.25-760 615-760h55q24.75 0 42.38 17.62Q730-724.75 730-700v440q0 24.75-17.62 42.37Q694.75-200 670-200h-55Zm-325 0q-24.75 0-42.37-17.63Q230-235.25 230-260v-440q0-24.75 17.63-42.38Q265.25-760 290-760h55q24.75 0 42.38 17.62Q405-724.75 405-700v440q0 24.75-17.62 42.37Q369.75-200 345-200h-55Z";
+const ICON_DOWNLOAD =
+  "M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z";
+const ICON_RETRY =
+  "M480-160q-133 0-226.5-93.5T160-480q0-133 93.5-226.5T480-800q85 0 149 34.5T740-671v-99q0-13 8.5-21.5T770-800q13 0 21.5 8.5T800-770v194q0 13-8.5 21.5T770-546H576q-13 0-21.5-8.5T546-576q0-13 8.5-21.5T576-606h138q-38-60-97-97t-137-37q-109 0-184.5 75.5T220-480q0 109 75.5 184.5T480-220q75 0 140-39.5T717-366q5-11 16.5-16.5t22.5-.5q12 5 16 16.5t-1 23.5q-39 84-117.5 133.5T480-160Z";
+const ICON_BOOKMARK =
+  "m480-240-196 84q-30 13-57-4.76-27-17.75-27-50.24v-574q0-24 18-42t42-18h440q24 0 42 18t18 42v574q0 32.49-27 50.24Q706-143 676-156l-196-84Zm0-64 220 93v-574H260v574l220-93Zm0-481H260h440-220Z";
+const ICON_CHECK = "M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z";
+const ICON_CHEVRON_DOWN =
+  "M469-358q-5-2-10-7L261-563q-9-9-8.5-21.5T262-606q9-9 21.5-9t21.5 9l175 176 176-176q9-9 21-8.5t21 9.5q9 9 9 21.5t-9 21.5L501-365q-5 5-10 7t-11 2q-6 0-11-2Z";
 
 const isAdminPage = /^\/admin(?:\/|$)/.test(window.location.pathname);
 let adminCSRF = "";
@@ -86,6 +130,28 @@ const copy = {
     generatingReady: "Download finished. Ready to play.",
     generatingUnavailable: "The download could not be started. Please try again later.",
     generatingAlreadyRunning: "This episode is already downloading.",
+    listenLater: "Listen later",
+    listenLaterDropdown: "Choose all episodes or Listen later",
+    emptyLater: "Nothing saved for later yet",
+    personalSettingLabel: "Personalization",
+    laterGroupLabel: "Listen later",
+    otherGroupLabel: "Other",
+    laterAutoRemoveLabel: "Remove played episodes from Listen later",
+    laterDownloadLabel: "Move a manual download into Listen later",
+    dimListenedLabel: "Dim listened episodes",
+    preloadNextLabel: "Load the next episode locally",
+    clearCache: "Clear cache",
+    cacheCleared: "Cache cleared",
+    cacheEmpty: "Nothing cached yet",
+    cacheSummary: (size, count) => `Cached ${size} (${count} ${count === 1 ? "episode" : "episodes"})`,
+    cacheSummaryUnknown: (count) => `Cached ${count} ${count === 1 ? "episode" : "episodes"} (size unavailable)`,
+    addListenLater: "Save for later",
+    removeListenLater: "Remove from Listen later",
+    laterAdded: "Saved for later",
+    laterUnavailable: "This one cannot be started here",
+    menuDownload: "Download",
+    menuRetry: "Download again",
+    openEpisodeActions: (title) => `Actions for ${title}`,
   },
   "zh-CN": {
     lang: "zh-CN",
@@ -150,6 +216,28 @@ const copy = {
     generatingReady: "下载完成，可以播放了",
     generatingUnavailable: "无法开始下载，请稍后重试",
     generatingAlreadyRunning: "该条目正在下载中",
+    listenLater: "稍后在听",
+    listenLaterDropdown: "在全部与稍后在听之间切换",
+    emptyLater: "还没有稍后在听的内容",
+    personalSettingLabel: "个性化设置",
+    laterGroupLabel: "稍后在听",
+    otherGroupLabel: "其他",
+    laterAutoRemoveLabel: "稍后在听自动移除听过的博客",
+    laterDownloadLabel: "手动下载自动移动至稍后在听",
+    dimListenedLabel: "已听过的标题置灰",
+    preloadNextLabel: "自动本地加载下一个博客",
+    clearCache: "清除缓存",
+    cacheCleared: "已清除缓存",
+    cacheEmpty: "还没有本地缓存",
+    cacheSummary: (size, count) => `已缓存 ${size}（${count} 条）`,
+    cacheSummaryUnknown: (count) => `已缓存 ${count} 条（大小不可用）`,
+    addListenLater: "稍后在听",
+    removeListenLater: "取消稍后在听",
+    laterAdded: "已加入稍后在听",
+    laterUnavailable: "该条目无法在这里开始下载",
+    menuDownload: "下载",
+    menuRetry: "重新下载",
+    openEpisodeActions: (title) => `${title} 的操作`,
   },
 }[localeKey];
 
@@ -207,6 +295,20 @@ const elements = {
   settingsDisplayLabel: document.querySelector("#settings-display-label"),
   settingsCategoryLabel: document.querySelector("#settings-category-label"),
   settingsCategorySelect: document.querySelector("#settings-default-category"),
+  settingsPersonalLabel: document.querySelector("#settings-personal-label"),
+  laterGroupLabel: document.querySelector("#settings-later-group-label"),
+  otherGroupLabel: document.querySelector("#settings-other-group-label"),
+  laterAutoLabel: document.querySelector("#settings-later-auto-label"),
+  laterAutoToggle: document.querySelector("#settings-later-auto"),
+  laterDownloadLabel: document.querySelector("#settings-later-download-label"),
+  laterDownloadToggle: document.querySelector("#settings-later-download"),
+  dimListenedLabel: document.querySelector("#settings-dim-label"),
+  dimListenedToggle: document.querySelector("#settings-dim"),
+  preloadNextLabel: document.querySelector("#settings-preload-label"),
+  preloadNextToggle: document.querySelector("#settings-preload"),
+  cacheSummary: document.querySelector("#settings-cache-summary"),
+  cacheClear: document.querySelector("#settings-cache-clear"),
+  popupMenu: document.querySelector("#popup-menu"),
   settingsLanguageLabel: document.querySelector("#settings-language-label"),
   settingsGithubLink: document.querySelector("#settings-github-link"),
   themeModeButtons: [...document.querySelectorAll("[data-theme-mode]")],
@@ -255,6 +357,30 @@ let defaultCategory = readDefaultCategoryPreference();
 let defaultCategoryApplied = false;
 // The player dock folds into a drawer so the list can take the screen back.
 let playerDrawer = readPlayerDrawerPreference();
+// The episodes saved for later and the ones already played through live in this
+// browser, like the preferences above, so they survive a reload on their own.
+let listenLater = readListenLaterRecords();
+let listened = readListenedRecords();
+let laterAutoRemove = readFlag(LATER_AUTO_REMOVE_KEY);
+let laterAutoDownload = readFlag(LATER_AUTO_DOWNLOAD_KEY);
+let dimListened = readFlag(DIM_LISTENED_KEY);
+let preloadNext = readFlag(PRELOAD_NEXT_KEY);
+// The first tab of the feed row is shared: it lists every feed until the
+// caret switches it to the episodes saved on this device. The slot keeps its
+// identity, so switching views never rebuilds the pages behind the swipe.
+let primaryView = "all";
+// The local audio cache is a manifest plus the object URLs that point at the
+// blobs it holds; the object URLs only make sense in this page.
+let audioCacheIndex = readAudioCacheIndex();
+const cachedBlobURLs = new Map();
+const preloadElements = new Map();
+const preloadsInFlight = new Set();
+// The menu, a long press, and the marquee each remember one thing at a time.
+let popupMenuAnchor = null;
+let popupMenuIgnoreClick = false;
+let popupMenuOpenedAt = 0;
+let suppressClickUntil = 0;
+let nowPlayingText = copy.chooseEpisode;
 
 applyLocale();
 initTheme();
@@ -299,8 +425,15 @@ document.addEventListener("visibilitychange", () => {
 const REFRESH_INTERVAL = 5_000;
 let refreshTimer = 0;
 
+// A narrower dock has less room for the title, so both the viewport and the
+// reduced motion preference decide whether it crawls.
+window.addEventListener("resize", () => applyTitleMarquee());
+smallViewport.addEventListener("change", () => applyTitleMarquee());
+reducedMotion.addEventListener("change", () => applyTitleMarquee());
+
 bindPlayerEvents();
 bindNoticeEvents();
+initPopupMenu();
 renderSpeed();
 loadNotice();
 loadPlayerConfig();
@@ -383,7 +516,10 @@ function clearNoticeDismissal() {
 async function loadPlayer() {
   setStatus(copy.loading);
   try {
-    const payload = isDemoMode() ? demoPayload() : await fetchPlayerData();
+    // The await keeps the demo payload on the same footing as a fetched one:
+    // the render runs after this module finished evaluating, so the state
+    // descriptions it reads are initialised by then.
+    const payload = await (isDemoMode() ? demoPayload() : fetchPlayerData());
     if (payload === null) return;
     applyPayload(payload);
     selectInitialEpisode();
@@ -406,6 +542,7 @@ function applyPayload(payload) {
     .sort((a, b) => b.sortTime - a.sortTime);
   applyDefaultCategory();
   renderCategorySetting();
+  syncListenLaterSnapshots();
 }
 
 // The default feed only applies to the first payload of the page: a poll that
@@ -413,6 +550,14 @@ function applyPayload(payload) {
 function applyDefaultCategory() {
   if (defaultCategoryApplied) return;
   defaultCategoryApplied = true;
+  // The saved list is not a feed: it opens the shared first tab on it instead
+  // of selecting a source of its own.
+  if (defaultCategory === LATER_SLOT) {
+    primaryView = LATER_SLOT;
+    state.activeSource = "all";
+    return;
+  }
+  primaryView = "all";
   state.activeSource = resolveCategory(defaultCategory);
 }
 
@@ -497,26 +642,32 @@ function renderTabs() {
   elements.dateTabs.replaceChildren();
 
   if (byCategory) {
-    for (const source of sourceChoices()) {
-      elements.dateTabs.append(
-        createTab(
-          source.id,
-          source.name,
-          countEpisodesForSource(source.id),
-          state.activeSource === source.id,
-          () => selectSlot({ source: source.id }),
-        ),
+    categoryChoices().forEach((choice, index) => {
+      const shared = index === 0;
+      const tab = createTab(
+        choice.id,
+        choice.name,
+        shared && primaryView === LATER_SLOT ? listenLaterCount() : countEpisodesForSource(choice.id),
+        state.activeSource === choice.id,
+        () => selectSlot({ source: choice.id }),
       );
-    }
+      elements.dateTabs.append(shared ? createSharedControl(tab) : tab);
+    });
     return;
   }
 
+  // While the saved list is on, each day tab counts the saved episodes of that
+  // day, which is what opening it will show.
+  const savedEpisodes = primaryView === LATER_SLOT ? listenLaterEpisodes() : null;
   for (const option of state.dateOptions) {
+    const count = savedEpisodes
+      ? savedEpisodes.filter((episode) => episode.dayKey === option.key).length
+      : countEpisodesForDate(option.key);
     elements.dateTabs.append(
       createTab(
         option.key,
         `${option.relativeLabel} ${option.monthDay}`,
-        countEpisodesForDate(option.key),
+        count,
         state.activeDate === option.key,
         () => selectSlot({ date: option.key }),
       ),
@@ -544,10 +695,92 @@ function createTab(key, label, count, selected, onSelect) {
   return button;
 }
 
+// The "all" control is shared in both layouts: the caret beside it switches
+// between every episode and the episodes saved on this device. The caret is a
+// sibling rather than a child, because a control cannot sit inside another one.
+function createSharedControl(button) {
+  const group = document.createElement("div");
+  group.className = "shared-control";
+  group.append(button, createTabDropdown());
+  return group;
+}
+
+// The shared first tab switches between every feed and the entries saved on
+// this device, so the saved list needs no tab of its own.
+function createTabDropdown() {
+  const button = document.createElement("button");
+  button.className = "date-tab-caret";
+  button.type = "button";
+  button.dataset.tabDropdown = "all";
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-label", copy.listenLaterDropdown);
+  button.title = copy.listenLaterDropdown;
+  button.append(createIcon(ICON_CHEVRON_DOWN, "date-tab-caret-icon"));
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleAllDropdown(button);
+  });
+  return button;
+}
+
+function toggleAllDropdown(anchor) {
+  if (popupMenuAnchor === anchor) {
+    closePopupMenu();
+    return;
+  }
+  openPopupMenu({
+    anchor,
+    label: copy.listenLaterDropdown,
+    items: [
+      {
+        label: copy.allSources,
+        checked: primaryView !== LATER_SLOT,
+        onSelect: () => setPrimaryView("all"),
+      },
+      {
+        label: copy.listenLater,
+        checked: primaryView === LATER_SLOT,
+        onSelect: () => setPrimaryView(LATER_SLOT),
+      },
+    ],
+  });
+}
+
+// The shared tab swaps what it lists: every feed, or the episodes saved on this
+// device. The pages behind the swipe are rebuilt in place, so the tab the
+// listener is on stays where it is.
+function setPrimaryView(view) {
+  const next = view === LATER_SLOT ? LATER_SLOT : "all";
+  if (next === primaryView) return;
+  primaryView = next;
+  renderAll();
+}
+
 // The feed row always offers "all" first, which is also where a swipe into a
-// new date row starts over.
+// new date row starts over. The saved-for-later slot only joins the row when
+// the list is grouped by feed, because it belongs to no single day.
 function sourceChoices() {
   return [{ id: "all", name: copy.allSources }, ...state.sources];
+}
+
+// The row opens with one shared tab and then one tab per feed.
+function categoryChoices() {
+  return [
+    { id: "all", name: primaryView === LATER_SLOT ? copy.listenLater : copy.allSources },
+    ...state.sources,
+  ];
+}
+
+// The shared "all" control lists the saved episodes while the personalisation
+// view is on. It works in either layout, because the saved list belongs to no
+// single day and to no single feed.
+function showsListenLater(slot) {
+  return primaryView === LATER_SLOT && slot?.source === "all";
+}
+
+function listenLaterCount() {
+  return listenLaterEpisodes().length;
 }
 
 function renderSourceFilters() {
@@ -556,15 +789,19 @@ function renderSourceFilters() {
   elements.sourceFilterSection.hidden = displayMode === "category";
   elements.sourceFilters.replaceChildren();
   const sources = sourceChoices();
+  const laterView = primaryView === LATER_SLOT;
   for (const source of sources) {
+    const shared = source.id === "all";
     const button = document.createElement("button");
     button.className = "source-filter";
     button.type = "button";
-    button.textContent = source.name;
+    button.textContent = shared && laterView ? copy.listenLater : source.name;
     button.dataset.source = source.id;
     button.setAttribute("aria-pressed", String(state.activeSource === source.id));
     button.addEventListener("click", () => selectSlot({ source: source.id }));
-    elements.sourceFilters.append(button);
+    // "All" carries the same caret here as it does in the feed row, so the
+    // saved list is reachable without changing the layout.
+    elements.sourceFilters.append(shared ? createSharedControl(button) : button);
   }
 }
 
@@ -574,8 +811,10 @@ function renderSourceFilters() {
 // it. Category mode has a single row, so there the feeds are the whole chain.
 // Every control owns one page of the episode list.
 function listSlots() {
+  if (displayMode === "category") {
+    return categoryChoices().map((source) => ({ date: "", source: source.id }));
+  }
   const sources = sourceChoices().map((source) => source.id);
-  if (displayMode === "category") return sources.map((source) => ({ date: "", source }));
   return state.dateOptions.flatMap((option) =>
     sources.map((source) => ({ date: option.key, source })),
   );
@@ -598,16 +837,24 @@ function slotKey(slot) {
 // A page is named by the day and feed it shows, because that is what a listener
 // needs to hear rather than the number of the page.
 function slotLabel(slot) {
+  if (showsListenLater(slot)) return copy.listenLater;
   const option = state.dateOptions.find((candidate) => candidate.key === slot.date);
-  const feed = sourceChoices().find((candidate) => candidate.id === slot.source);
-  const feedName = feed ? feed.name : slot.source;
+  const feedName = sourceName(slot.source);
   return option ? `${option.relativeLabel} ${option.monthDay} · ${feedName}` : feedName;
 }
 
 // The episodes behind one header control. Category mode keeps the whole window
 // and orders it by date, so a feed reads as one continuous list; date mode stays
-// on the selected day.
+// on the selected day. The saved-for-later slot ignores both and shows what this
+// browser holds, newest save first.
 function slotEpisodes(slot) {
+  if (showsListenLater(slot)) {
+    const saved = listenLaterEpisodes();
+    // The date layout splits the saved list the way it splits everything else:
+    // one page per day, so the day tabs keep their meaning while it is on.
+    if (displayMode === "category" || !slot.date) return saved;
+    return saved.filter((episode) => episode.dayKey === slot.date);
+  }
   if (displayMode === "category") {
     return state.episodes.filter((episode) => inSource(episode, slot.source));
   }
@@ -668,6 +915,9 @@ function initEpisodeSlider() {
 // Everything that follows the page in front: the highlighted control, the empty
 // state and the rows the queue plays.
 function syncActiveSlot() {
+  // The page behind the menu changes, so the actions no longer belong to what
+  // the listener is looking at.
+  closePopupMenu();
   const slot = slider ? listSlots()[slider.activeIndex] : activeSlot();
   if (!slot) return;
   state.activeSource = slot.source;
@@ -682,7 +932,10 @@ function syncActiveSlot() {
 // The header controls pick a page by name, so a click lands on the same chain
 // the swipe walks.
 function selectSlot(slot) {
-  state.activeSource = slot.source;
+  // A day tab names only the day, so the feed the list is already on stays
+  // selected; assigning an absent source would drop the page and leave the
+  // empty state over the list.
+  if (slot.source) state.activeSource = slot.source;
   if (slot.date) state.activeDate = slot.date;
   const index = activeSlotIndex(listSlots());
   if (!slider || index < 0) {
@@ -712,6 +965,10 @@ function revealActiveControls() {
 function renderSlotStatus() {
   if (visibleEpisodes().length > 0) {
     setStatus("");
+    return;
+  }
+  if (showsListenLater(activeSlot())) {
+    setStatus(copy.emptyLater);
     return;
   }
   setStatus(displayMode === "category" ? copy.emptyCategory : copy.empty);
@@ -771,13 +1028,13 @@ function createEpisodeSlide(slot) {
   rows.className = "episode-rows";
   rows.role = "list";
   const fragment = document.createDocumentFragment();
-  for (const episode of slotEpisodes(slot)) fragment.append(createEpisodeRow(episode));
+  for (const episode of slotEpisodes(slot)) fragment.append(createEpisodeRow(episode, slot));
   rows.append(fragment);
   slide.append(rows);
   return slide;
 }
 
-function createEpisodeRow(episode) {
+function createEpisodeRow(episode, slot = null) {
   const row = elements.rowTemplate.content.firstElementChild.cloneNode(true);
   row.dataset.episodeId = episode.id;
   row.classList.toggle("is-current", episode.id === state.currentEpisodeID);
@@ -807,16 +1064,21 @@ function createEpisodeRow(episode) {
     event.preventDefault();
     activateEpisode(episode);
   });
+  bindRowContextMenu(row, episode);
 
   // In category mode every row repeats the same feed, so that column carries
-  // the publish date instead of the feed name.
+  // the publish date instead of the feed name; the saved-for-later page mixes
+  // feeds and keeps the names instead.
+  const byDate = displayMode === "category" && !showsListenLater(slot);
   const source = row.querySelector(".episode-source");
-  source.classList.toggle("is-date", displayMode === "category");
-  source.textContent =
-    displayMode === "category" ? episodeDateLabel(episode) : sourceName(episode.sourceID);
+  source.classList.toggle("is-date", byDate);
+  source.textContent = byDate ? episodeDateLabel(episode) : sourceName(episode.sourceID);
   const title = row.querySelector(".episode-title");
   title.textContent = episode.title;
   title.title = episode.title;
+  // Dimming is a personalisation choice, so a listened title only greys out
+  // once the listener asked for it.
+  title.classList.toggle("is-listened", dimListened && isListened(episode.id));
 
   const time = row.querySelector(".episode-time");
   renderEpisodeDuration(time, episode.durationSeconds);
@@ -845,6 +1107,8 @@ function createEpisodeRow(episode) {
 // The row control plays a ready episode, starts a download for one that is
 // waiting, and reports progress for one that is already running.
 function activateEpisode(episode) {
+  // The click that follows a long press belongs to the menu, not to the row.
+  if (Date.now() < suppressClickUntil) return;
   if (isPlayable(episode)) {
     toggleEpisode(episode);
     return;
@@ -868,7 +1132,10 @@ async function toggleEpisode(episode) {
   selectEpisode(episode, { autoplay: true });
 }
 
-async function startEpisodeDownload(episode) {
+async function startEpisodeDownload(episode, { conflictToast = copy.generatingAlreadyRunning } = {}) {
+  // A download started by hand can also be the moment the episode joins the
+  // saved list, which is what the Listen later group in the settings controls.
+  if (laterAutoDownload) saveEpisodeForLater(episode);
   if (isDemoMode()) {
     simulateDemoDownload(episode);
     return;
@@ -883,7 +1150,7 @@ async function startEpisodeDownload(episode) {
     );
     if (response.status === 409) {
       // Another listener started it, or the page was stale about its state.
-      showToast(copy.generatingAlreadyRunning);
+      showToast(conflictToast);
       await refreshEpisodes();
       return;
     }
@@ -981,7 +1248,13 @@ function hideToast() {
 }
 
 function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
+  // Moving on is the moment the episode before this one is behind the
+  // listener, which is when the saved list may let go of it.
+  const previousEpisodeID = state.currentEpisodeID;
   state.currentEpisodeID = episode.id;
+  if (previousEpisodeID && previousEpisodeID !== episode.id) {
+    releaseListenedFromListenLater(previousEpisodeID);
+  }
   state.restoringResume = resumeAt > 0;
   clearMediaSessionPosition();
   elements.audio.defaultPlaybackRate = state.speed;
@@ -997,11 +1270,12 @@ function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
       { once: true },
     );
   }
-  elements.audio.src = episode.audioURL;
+  // A cached episode plays from the copy this page already holds.
+  elements.audio.src = audioSourceFor(episode);
   elements.audio.load();
   applyPlaybackRate();
   document.title = episode.title;
-  elements.nowPlayingTitle.textContent = episode.title;
+  renderNowPlayingTitle(episode.title);
   elements.nowPlayingSource.textContent = sourceName(episode.sourceID);
   elements.playToggle.disabled = false;
   elements.progress.disabled = false;
@@ -1029,7 +1303,18 @@ function bindPlayerEvents() {
   elements.nextButton.addEventListener("click", () => moveInQueue(1));
   elements.audio.addEventListener("play", renderPlaybackState);
   elements.audio.addEventListener("pause", renderPlaybackState);
-  elements.audio.addEventListener("ended", () => moveInQueue(1));
+  elements.audio.addEventListener("play", () => {
+    markEpisodeListened(state.currentEpisodeID);
+    // Playing an episode is the moment to pull the next one down for the rest
+    // of the trip.
+    preloadNextEpisode();
+  });
+  elements.audio.addEventListener("ended", () => {
+    // An episode that played through is done with, even when it was the last
+    // one in the queue and nothing follows it.
+    releaseListenedFromListenLater(state.currentEpisodeID);
+    moveInQueue(1);
+  });
   elements.audio.addEventListener("loadedmetadata", () => {
     applyPlaybackRate();
     updateProgress();
@@ -1236,6 +1521,14 @@ function applyLocale() {
   elements.settingsThemeLabel.textContent = copy.themeSettingLabel;
   elements.settingsDisplayLabel.textContent = copy.displaySettingLabel;
   elements.settingsCategoryLabel.textContent = copy.categorySettingLabel;
+  elements.settingsPersonalLabel.textContent = copy.personalSettingLabel;
+  elements.laterGroupLabel.textContent = copy.laterGroupLabel;
+  elements.otherGroupLabel.textContent = copy.otherGroupLabel;
+  elements.laterAutoLabel.textContent = copy.laterAutoRemoveLabel;
+  elements.laterDownloadLabel.textContent = copy.laterDownloadLabel;
+  elements.dimListenedLabel.textContent = copy.dimListenedLabel;
+  elements.preloadNextLabel.textContent = copy.preloadNextLabel;
+  elements.cacheClear.textContent = copy.clearCache;
   // The settings panel repeats both controls for phones, where the header
   // hides them; the label text is the only thing they need here.
   elements.settingsLanguageLabel.textContent = copy.languageLabel;
@@ -1258,7 +1551,7 @@ function applyLocale() {
   elements.previousButton.setAttribute("aria-label", copy.previous);
   elements.nextButton.setAttribute("aria-label", copy.next);
   elements.nowPlayingLabel.textContent = copy.nowPlaying;
-  elements.nowPlayingTitle.textContent = copy.chooseEpisode;
+  renderNowPlayingTitle(copy.chooseEpisode);
   elements.progress.setAttribute("aria-label", copy.progressLabel);
   elements.speedLabel.textContent = copy.speedLabel;
   elements.speedLegend.textContent = copy.playbackSpeed;
@@ -1350,6 +1643,7 @@ function initSettings() {
       setDefaultCategory(elements.settingsCategorySelect.value),
     );
   }
+  initPersonalSettings();
   renderDisplaySettings();
 }
 
@@ -1385,10 +1679,20 @@ function renderDisplaySettings() {
 // The default feed is a dropdown rather than a segmented control, because a
 // deployment can follow more feeds than would fit in one row. Its options repeat
 // the header tabs, "all" first, so both read in the same order.
+// The dropdown repeats the feed row and adds the saved list, which the shared
+// first tab can show in place of "all".
+function defaultCategoryChoices() {
+  return [
+    { id: "all", name: copy.allSources },
+    { id: LATER_SLOT, name: copy.listenLater },
+    ...state.sources,
+  ];
+}
+
 function renderCategorySetting() {
   const select = elements.settingsCategorySelect;
   if (!select) return;
-  const options = sourceChoices().map((choice) => {
+  const options = defaultCategoryChoices().map((choice) => {
     const option = document.createElement("option");
     option.value = choice.id;
     option.textContent = choice.name;
@@ -1398,13 +1702,16 @@ function renderCategorySetting() {
   select.value = resolveCategory(defaultCategory);
 }
 
-// A feed the deployment no longer follows falls back to the whole list.
+// A feed the deployment no longer follows falls back to the whole list; the
+// saved list is a choice of its own rather than a feed.
 function resolveCategory(sourceID) {
+  if (sourceID === LATER_SLOT) return LATER_SLOT;
   return sourceChoices().some((choice) => choice.id === sourceID) ? sourceID : "all";
 }
 
 // Picking a feed stores it and shows it right away, so the panel previews what
-// the next visit will open on.
+// the next visit will open on. The saved list works in either layout, so it
+// needs no layout of its own.
 function setDefaultCategory(sourceID) {
   defaultCategory = resolveCategory(sourceID);
   // An explicit pick is the current choice as well, so the first payload must
@@ -1413,6 +1720,11 @@ function setDefaultCategory(sourceID) {
   if (defaultCategory === "all") removeStorage(DEFAULT_CATEGORY_KEY);
   else writeStorage(DEFAULT_CATEGORY_KEY, defaultCategory);
   renderCategorySetting();
+  if (defaultCategory === LATER_SLOT) {
+    setPrimaryView(LATER_SLOT);
+    return;
+  }
+  setPrimaryView("all");
   selectSlot({ source: defaultCategory });
 }
 
@@ -1434,6 +1746,9 @@ function applyPlayerDrawer() {
   // The attribute drives both the shell rows and the compact dock layout.
   if (collapsed) document.documentElement.dataset.playerDrawer = "collapsed";
   else delete document.documentElement.dataset.playerDrawer;
+  // Folding the dock changes the width the title has, which decides whether it
+  // has to crawl at all.
+  applyTitleMarquee();
   if (!elements.playerDrawerToggle) return;
   const label = collapsed ? copy.expandPlayer : copy.collapsePlayer;
   elements.playerDrawerToggle.setAttribute("aria-expanded", String(!collapsed));
@@ -1528,11 +1843,20 @@ function selectInitialEpisode() {
   const inWindow = (candidate) => availableDateKeys.has(candidate.dayKey) && isPlayable(candidate);
   // The list opens on the selected feed, so the first episode comes from it when
   // it has one. Falling back to every feed keeps the player usable when the
-  // default feed has nothing in the window.
+  // default feed has nothing in the window. The saved list is a view of its own,
+  // so the player follows it when the page opened there; one saved today wins,
+  // because that is the day the date layout would open on.
+  const savedEpisodes = showsListenLater(activeSlot()) ? listenLaterEpisodes() : [];
+  // The date layout only shows the saved episodes of the three days on screen,
+  // so it picks one of those; the feed layout lists every saved episode at once.
+  const savedEpisode =
+    (displayMode === "date" ? savedEpisodes.find(inWindow) : savedEpisodes.find(isPlayable)) || null;
   const latestEpisode =
+    savedEpisode ||
     state.episodes.find(
       (candidate) => inWindow(candidate) && inSource(candidate, state.activeSource),
-    ) || state.episodes.find(inWindow);
+    ) ||
+    state.episodes.find(inWindow);
   if (!latestEpisode) {
     renderAll();
     return;
@@ -1602,6 +1926,694 @@ function removeStorage(key) {
   } catch {
     // Stale preferences are harmless in browsers that disable storage.
   }
+}
+
+// ---- Personalisation flags ----
+
+function readFlag(key) {
+  return readStoredString(key) === "1";
+}
+
+function writeFlag(key, enabled) {
+  if (enabled) writeStorage(key, "1");
+  else removeStorage(key);
+}
+
+// ---- Listen later ----
+
+// The saved entries keep a snapshot of the row they came from: an episode that
+// the API window dropped stays listed and playable, and the live payload only
+// refreshes the snapshot while the episode is still in it.
+function readListenLaterRecords() {
+  try {
+    const value = JSON.parse(readStoredString(LISTEN_LATER_KEY) || "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((record) => record && typeof record.id === "string" && record.id !== "");
+  } catch {
+    return [];
+  }
+}
+
+function writeListenLaterRecords(records) {
+  writeStorage(LISTEN_LATER_KEY, JSON.stringify(records.slice(0, LISTEN_LATER_LIMIT)));
+}
+
+function snapshotFromEpisode(episode, addedAt) {
+  return {
+    id: episode.id,
+    sourceID: episode.sourceID,
+    title: episode.title,
+    audioURL: episode.audioURL,
+    durationSeconds: episode.durationSeconds || 0,
+    state: episode.state,
+    stage: episode.stage || "",
+    publishedAt: episode.publishedAt ? episode.publishedAt.toISOString() : "",
+    addedAt: addedAt || Date.now(),
+  };
+}
+
+function episodeFromLaterRecord(record) {
+  const publishedAt = parseDate(record.publishedAt);
+  const audioURL = String(record.audioURL || "");
+  const reportedState = String(record.state || "");
+  const durationSeconds = Number(record.durationSeconds);
+  return {
+    id: String(record.id),
+    hidden: false,
+    sourceID: String(record.sourceID || ""),
+    title: String(record.title || copy.untitled),
+    audioURL,
+    state: EPISODE_STATES.includes(reportedState) ? reportedState : audioURL ? "ready" : "pending",
+    stage: String(record.stage || ""),
+    publishedAt,
+    durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
+    dayKey: publishedAt ? dateKey(publishedAt) : "",
+    sortTime: publishedAt ? publishedAt.getTime() : 0,
+    addedAt: Number(record.addedAt) || 0,
+  };
+}
+
+// What the saved-for-later page shows: the live episode when the API still
+// returns it, the stored snapshot otherwise.
+function listenLaterEpisodes() {
+  return listenLater.map((record) => {
+    const live = state.episodes.find((episode) => episode.id === record.id);
+    return live ? { ...live, addedAt: record.addedAt } : episodeFromLaterRecord(record);
+  });
+}
+
+function inListenLater(id) {
+  return listenLater.some((record) => record.id === id);
+}
+
+function removeEpisodeFromListenLater(id) {
+  const next = listenLater.filter((record) => record.id !== id);
+  if (next.length === listenLater.length) return false;
+  listenLater = next;
+  writeListenLaterRecords(listenLater);
+  return true;
+}
+
+function addEpisodeToListenLater(episode) {
+  listenLater = [
+    snapshotFromEpisode(episode),
+    ...listenLater.filter((record) => record.id !== episode.id),
+  ];
+  writeListenLaterRecords(listenLater);
+}
+
+// A poll moved an episode on (its download finished, or it failed), so the
+// saved copy follows it; only the fields the row renders are compared.
+function syncListenLaterSnapshots() {
+  if (listenLater.length === 0) return;
+  let changed = false;
+  const records = listenLater.map((record) => {
+    const live = state.episodes.find((episode) => episode.id === record.id);
+    if (!live) return record;
+    const next = snapshotFromEpisode(live, record.addedAt);
+    if (
+      next.audioURL === record.audioURL &&
+      next.state === record.state &&
+      next.durationSeconds === record.durationSeconds &&
+      next.stage === record.stage
+    ) {
+      return record;
+    }
+    changed = true;
+    return next;
+  });
+  if (!changed) return;
+  listenLater = records;
+  writeListenLaterRecords(records);
+}
+
+function toggleListenLater(episode) {
+  if (!episode) return;
+  if (inListenLater(episode.id)) {
+    // Dropping an entry speaks for itself: the row leaves the saved list.
+    removeEpisodeFromListenLater(episode.id);
+    renderAll();
+    return;
+  }
+  addEpisodeToListenLater(episode);
+  showToast(copy.laterAdded);
+  // The shared tab carries the count, so the header is redrawn as well.
+  renderAll();
+  startLaterDownload(episode);
+}
+
+// Saving an episode that has no audio yet is a request for it, so the download
+// starts right away. Only a poll-only source can be started from the player;
+// everything else already runs through the automatic pipeline.
+function startLaterDownload(episode) {
+  if (episode.state !== "pending" && episode.state !== "failed") return;
+  startEpisodeDownload(episode, { conflictToast: copy.laterUnavailable });
+}
+
+// The same save without the toast: a download the listener started by hand
+// already reports its own stage, so joining the saved list stays quiet.
+function saveEpisodeForLater(episode) {
+  if (!episode || inListenLater(episode.id)) return false;
+  addEpisodeToListenLater(episode);
+  // The shared tab carries the count of what is saved.
+  renderAll();
+  return true;
+}
+
+// ---- Listened episodes ----
+
+function readListenedRecords() {
+  try {
+    const value = JSON.parse(readStoredString(LISTENED_KEY) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+// The markers are only kept to grey out rows and to drop a finished entry from
+// the saved list, so the oldest ones are trimmed away.
+function writeListenedRecords(records) {
+  const entries = Object.entries(records)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, LISTENED_LIMIT);
+  writeStorage(LISTENED_KEY, JSON.stringify(Object.fromEntries(entries)));
+}
+
+function isListened(id) {
+  return Boolean(id) && Boolean(listened[id]);
+}
+
+// Playing an episode is enough to count as listened: a listener who moves on
+// before the end has still heard it. The saved list is left alone here, because
+// dropping the episode the moment it starts would empty the list under the
+// listener's finger; it lets go once the episode is behind them.
+function markEpisodeListened(id) {
+  if (!id || listened[id]) return;
+  listened[id] = Date.now();
+  writeListenedRecords(listened);
+  if (dimListened) renderAll();
+}
+
+// The saved list releases an episode the listener has left: it played through,
+// or they moved on to something else. Only an episode that was actually played
+// counts, so a saved one that is merely tapped through stays.
+function releaseListenedFromListenLater(id) {
+  if (!laterAutoRemove || !id || !listened[id] || !inListenLater(id)) return false;
+  removeEpisodeFromListenLater(id);
+  renderAll();
+  return true;
+}
+
+// ---- The shared popup menu ----
+
+function createIcon(path, className = "") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 -960 960 960");
+  svg.setAttribute("aria-hidden", "true");
+  if (className) svg.setAttribute("class", className);
+  const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  shape.setAttribute("d", path);
+  shape.setAttribute("fill", "currentColor");
+  svg.append(shape);
+  return svg;
+}
+
+// One menu serves the "All" dropdown and the row actions. It hangs off the body
+// because both the tab row and the episode pages scroll, and a menu inside them
+// would be clipped.
+function initPopupMenu() {
+  const menu = elements.popupMenu;
+  if (!menu) return;
+  document.addEventListener("click", (event) => {
+    if (menu.hidden) return;
+    if (event.target.closest("#popup-menu")) return;
+    // The click that opened the menu is still on its way here, and the one a
+    // long press leaves behind belongs to the menu as well.
+    if (popupMenuIgnoreClick && Date.now() - popupMenuOpenedAt < LONG_PRESS_CLICK_GUARD_MS) {
+      popupMenuIgnoreClick = false;
+      return;
+    }
+    closePopupMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || menu.hidden) return;
+    closePopupMenu({ focusAnchor: true });
+  });
+  document.addEventListener("scroll", () => closePopupMenu(), { capture: true, passive: true });
+  window.addEventListener("resize", () => closePopupMenu());
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) closePopupMenu();
+  });
+}
+
+function openPopupMenu({ anchor = null, x = null, y = null, items = [], label = "" }) {
+  const menu = elements.popupMenu;
+  if (!menu || items.length === 0) return;
+  menu.replaceChildren();
+  if (label) menu.setAttribute("aria-label", label);
+  else menu.removeAttribute("aria-label");
+
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.className = "popup-menu-item";
+    button.type = "button";
+    const selectable = item.checked !== undefined;
+    button.role = selectable ? "menuitemradio" : "menuitem";
+    if (selectable) button.setAttribute("aria-checked", String(Boolean(item.checked)));
+    button.disabled = Boolean(item.disabled);
+    button.append(createIcon(item.icon || "", "popup-menu-icon"));
+    const text = document.createElement("span");
+    text.className = "popup-menu-label";
+    text.textContent = item.label;
+    button.append(text);
+    const mark = document.createElement("span");
+    mark.className = "popup-menu-mark";
+    if (item.checked) mark.append(createIcon(ICON_CHECK, "popup-menu-check"));
+    button.append(mark);
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      closePopupMenu();
+      item.onSelect?.();
+    });
+    menu.append(button);
+  }
+
+  menu.hidden = false;
+  positionPopupMenu(menu, anchor, x, y);
+  popupMenuAnchor = anchor;
+  popupMenuOpenedAt = Date.now();
+  popupMenuIgnoreClick = true;
+  if (anchor?.hasAttribute("aria-haspopup")) anchor.setAttribute("aria-expanded", "true");
+  menu.querySelector(".popup-menu-item:not(:disabled)")?.focus({ preventScroll: true });
+}
+
+function positionPopupMenu(menu, anchor, x, y) {
+  const margin = 8;
+  const size = menu.getBoundingClientRect();
+  const anchorRect = anchor ? anchor.getBoundingClientRect() : null;
+  const wantedLeft = x !== null ? x : anchorRect ? anchorRect.left : margin;
+  const wantedTop = y !== null ? y : anchorRect ? anchorRect.bottom + 6 : margin;
+  const left = Math.min(
+    Math.max(margin, wantedLeft),
+    Math.max(margin, window.innerWidth - margin - size.width),
+  );
+  let top = wantedTop;
+  if (top + size.height > window.innerHeight - margin) {
+    top = anchorRect ? anchorRect.top - size.height - 6 : y - size.height;
+  }
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(Math.max(margin, top))}px`;
+}
+
+function closePopupMenu({ focusAnchor = false } = {}) {
+  const menu = elements.popupMenu;
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  menu.replaceChildren();
+  popupMenuIgnoreClick = false;
+  const anchor = popupMenuAnchor;
+  popupMenuAnchor = null;
+  if (anchor?.isConnected) {
+    if (anchor.hasAttribute("aria-haspopup")) anchor.setAttribute("aria-expanded", "false");
+    if (focusAnchor && typeof anchor.focus === "function") anchor.focus({ preventScroll: true });
+  }
+}
+
+// ---- Row actions: long press and right click ----
+
+// A press that is held on a row opens the same actions a right click does, so a
+// phone can start a download, save an entry for later, or drop it again.
+function bindRowContextMenu(row, episode) {
+  let timer = 0;
+  let pressed = false;
+  let startX = 0;
+  let startY = 0;
+  const cancel = () => {
+    window.clearTimeout(timer);
+    timer = 0;
+    pressed = false;
+  };
+  row.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" || (event.button ?? 0) !== 0) return;
+    pressed = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = 0;
+      pressed = false;
+      suppressEpisodeClick();
+      navigator.vibrate?.(12);
+      openEpisodeMenu(episode, { x: startX, y: startY, anchor: row });
+    }, LONG_PRESS_MS);
+  });
+  row.addEventListener("pointermove", (event) => {
+    if (!pressed) return;
+    if (
+      Math.abs(event.clientX - startX) > LONG_PRESS_SLOP ||
+      Math.abs(event.clientY - startY) > LONG_PRESS_SLOP
+    ) {
+      cancel();
+    }
+  });
+  row.addEventListener("pointerup", cancel);
+  row.addEventListener("pointercancel", cancel);
+  row.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    cancel();
+    suppressEpisodeClick();
+    openEpisodeMenu(episode, { x: event.clientX, y: event.clientY, anchor: row });
+  });
+}
+
+// The click a long press leaves behind must not also start playback.
+function suppressEpisodeClick() {
+  suppressClickUntil = Date.now() + LONG_PRESS_CLICK_GUARD_MS;
+}
+
+function openEpisodeMenu(episode, { x = null, y = null, anchor = null } = {}) {
+  openPopupMenu({
+    anchor,
+    x,
+    y,
+    label: copy.openEpisodeActions(episode.title),
+    items: episodeMenuItems(episode),
+  });
+}
+
+// The first item mirrors the row control: it plays what is ready, starts or
+// retries a download, and reports the stage of one that is already running. The
+// second item always offers the saved-for-later toggle.
+function episodeMenuItems(episode) {
+  const id = episode.id;
+  const items = [];
+  const playing = id === state.currentEpisodeID && !elements.audio.paused;
+  if (episode.state === "processing") {
+    items.push({ label: stageText(episode.stage), icon: ICON_DOWNLOAD, disabled: true });
+  } else if (episode.state === "failed") {
+    items.push({
+      label: copy.menuRetry,
+      icon: ICON_RETRY,
+      onSelect: () => startEpisodeDownload(findEpisode(id) || episode),
+    });
+  } else if (episode.state === "pending") {
+    items.push({
+      label: copy.menuDownload,
+      icon: ICON_DOWNLOAD,
+      onSelect: () => startEpisodeDownload(findEpisode(id) || episode),
+    });
+  } else {
+    items.push({
+      label: playing ? copy.pause : copy.play,
+      icon: playing ? ICON_PAUSE : ICON_PLAY,
+      onSelect: () => toggleEpisode(findEpisode(id) || episode),
+    });
+  }
+  items.push({
+    label: inListenLater(id) ? copy.removeListenLater : copy.addListenLater,
+    icon: ICON_BOOKMARK,
+    checked: inListenLater(id),
+    onSelect: () => toggleListenLater(findEpisode(id) || episode),
+  });
+  return items;
+}
+
+// A menu lives longer than the row it was opened from, so its actions look the
+// current episode up again instead of holding the rendered row.
+function findEpisode(id) {
+  const live = state.episodes.find((episode) => episode.id === id);
+  if (live) return live;
+  const record = listenLater.find((item) => item.id === id);
+  return record ? episodeFromLaterRecord(record) : null;
+}
+
+// ---- Local audio cache ----
+
+function readAudioCacheIndex() {
+  try {
+    const value = JSON.parse(readStoredString(AUDIO_CACHE_KEY) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeAudioCacheIndex() {
+  writeStorage(AUDIO_CACHE_KEY, JSON.stringify(audioCacheIndex));
+}
+
+function cachedTotals() {
+  const entries = Object.values(audioCacheIndex);
+  const sized = entries.filter((entry) => Number(entry?.bytes) > 0);
+  return {
+    count: entries.length,
+    bytes: sized.reduce((total, entry) => total + Number(entry.bytes), 0),
+    sized: sized.length > 0,
+  };
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 ? 0 : value < 10 ? 1 : 0;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+// Playing an episode also fetches the next one that can be played, so a queue
+// keeps going on a train with no signal. The fetch is idempotent per episode.
+function preloadNextEpisode() {
+  if (!preloadNext) return;
+  const queue = playableEpisodes();
+  const index = queue.findIndex((episode) => episode.id === state.currentEpisodeID);
+  if (index < 0) return;
+  const next = queue[index + 1];
+  if (next) preloadEpisodeAudio(next);
+}
+
+function preloadEpisodeAudio(episode) {
+  const url = episode.audioURL;
+  if (!url || preloadsInFlight.has(url)) return;
+  if (cachedBlobURLs.has(url) || audioCacheIndex[episode.id]?.url === url) return;
+  preloadsInFlight.add(url);
+  if (typeof caches === "undefined" || !window.isSecureContext) {
+    preloadsInFlight.delete(url);
+    preloadViaAudioElement(episode);
+    return;
+  }
+  fetch(url, { cache: "no-store" })
+    .then((response) => {
+      if (!response.ok) throw new Error(`audio preload returned ${response.status}`);
+      return response.blob();
+    })
+    .then(async (blob) => {
+      const cache = await caches.open(AUDIO_CACHE_NAME);
+      await cache.put(url, new Response(blob, { headers: { "Content-Type": blob.type || "audio/mpeg" } }));
+      cachedBlobURLs.set(url, URL.createObjectURL(blob));
+      recordCachedEpisode(episode.id, url, blob.size);
+    })
+    .catch(() => {
+      // A cross-origin audio host without CORS headers cannot be read here, so
+      // the media element fetches it instead; its size stays unknown.
+      preloadViaAudioElement(episode);
+    })
+    .finally(() => preloadsInFlight.delete(url));
+}
+
+function preloadViaAudioElement(episode) {
+  if (preloadElements.has(episode.id)) return;
+  const audio = document.createElement("audio");
+  audio.preload = "auto";
+  audio.src = episode.audioURL;
+  audio.addEventListener("loadeddata", () => recordCachedEpisode(episode.id, episode.audioURL, null), {
+    once: true,
+  });
+  preloadElements.set(episode.id, audio);
+  audio.load();
+}
+
+function recordCachedEpisode(episodeID, url, bytes) {
+  const previous = audioCacheIndex[episodeID];
+  if (previous && previous.url !== url) dropCachedEpisode(episodeID);
+  audioCacheIndex[episodeID] = {
+    url,
+    bytes: Number.isFinite(bytes) && bytes > 0 ? bytes : null,
+    cachedAt: Date.now(),
+  };
+  evictCachedEpisodes();
+  writeAudioCacheIndex();
+  renderCacheSummary();
+}
+
+function evictCachedEpisodes() {
+  const entries = Object.entries(audioCacheIndex).sort(
+    (left, right) => (left[1]?.cachedAt || 0) - (right[1]?.cachedAt || 0),
+  );
+  while (entries.length > AUDIO_CACHE_LIMIT) {
+    const [episodeID] = entries.shift();
+    dropCachedEpisode(episodeID);
+  }
+}
+
+function dropCachedEpisode(episodeID) {
+  const entry = audioCacheIndex[episodeID];
+  delete audioCacheIndex[episodeID];
+  if (entry?.url) {
+    const objectURL = cachedBlobURLs.get(entry.url);
+    if (objectURL) {
+      cachedBlobURLs.delete(entry.url);
+      // The object URL of the episode that is playing stays alive until the
+      // listener moves on, so dropping the copy never stops the audio.
+      if (elements.audio.currentSrc !== objectURL) URL.revokeObjectURL(objectURL);
+    }
+    if (typeof caches !== "undefined") {
+      caches
+        .open(AUDIO_CACHE_NAME)
+        .then((cache) => cache.delete(entry.url))
+        .catch(() => {});
+    }
+  }
+  const preload = preloadElements.get(episodeID);
+  if (preload) {
+    preloadElements.delete(episodeID);
+    preload.removeAttribute("src");
+    preload.load();
+  }
+}
+
+function clearAudioCache() {
+  for (const episodeID of Object.keys(audioCacheIndex)) dropCachedEpisode(episodeID);
+  audioCacheIndex = {};
+  writeAudioCacheIndex();
+  if (typeof caches !== "undefined") caches.delete(AUDIO_CACHE_NAME).catch(() => {});
+  renderCacheSummary();
+  showToast(copy.cacheCleared);
+}
+
+// The audio of one entry is only ever used through its object URL, so the
+// cached bytes are what plays back without asking the network again.
+function audioSourceFor(episode) {
+  return cachedBlobURLs.get(episode.audioURL) || episode.audioURL;
+}
+
+function renderCacheSummary() {
+  const summary = elements.cacheSummary;
+  const clear = elements.cacheClear;
+  if (!summary || !clear) return;
+  summary.hidden = !preloadNext;
+  clear.hidden = !preloadNext;
+  if (!preloadNext) return;
+  const totals = cachedTotals();
+  if (totals.count === 0) summary.textContent = copy.cacheEmpty;
+  else if (totals.sized) summary.textContent = copy.cacheSummary(formatBytes(totals.bytes), totals.count);
+  else summary.textContent = copy.cacheSummaryUnknown(totals.count);
+}
+
+// ---- Personalisation settings ----
+
+function initPersonalSettings() {
+  elements.laterAutoToggle?.addEventListener("click", () =>
+    setPersonalFlag("laterAutoRemove", !laterAutoRemove),
+  );
+  elements.laterDownloadToggle?.addEventListener("click", () =>
+    setPersonalFlag("laterAutoDownload", !laterAutoDownload),
+  );
+  elements.dimListenedToggle?.addEventListener("click", () =>
+    setPersonalFlag("dimListened", !dimListened),
+  );
+  elements.preloadNextToggle?.addEventListener("click", () =>
+    setPersonalFlag("preloadNext", !preloadNext),
+  );
+  elements.cacheClear?.addEventListener("click", () => clearAudioCache());
+  renderPersonalSettings();
+}
+
+function setPersonalFlag(name, enabled) {
+  if (name === "laterAutoRemove") {
+    laterAutoRemove = enabled;
+    writeFlag(LATER_AUTO_REMOVE_KEY, enabled);
+  } else if (name === "laterAutoDownload") {
+    laterAutoDownload = enabled;
+    writeFlag(LATER_AUTO_DOWNLOAD_KEY, enabled);
+  } else if (name === "dimListened") {
+    dimListened = enabled;
+    writeFlag(DIM_LISTENED_KEY, enabled);
+  } else {
+    preloadNext = enabled;
+    writeFlag(PRELOAD_NEXT_KEY, enabled);
+    // Turning local loading on is a request for the queue to be held, so the
+    // episode after the one that is playing is fetched right away.
+    if (enabled) preloadNextEpisode();
+  }
+  renderPersonalSettings();
+  renderEpisodeList();
+}
+
+function renderPersonalSettings() {
+  setSwitchState(elements.laterAutoToggle, laterAutoRemove);
+  setSwitchState(elements.laterDownloadToggle, laterAutoDownload);
+  setSwitchState(elements.dimListenedToggle, dimListened);
+  setSwitchState(elements.preloadNextToggle, preloadNext);
+  renderCacheSummary();
+}
+
+function setSwitchState(element, enabled) {
+  if (element) element.setAttribute("aria-checked", String(Boolean(enabled)));
+}
+
+// ---- The now playing title ----
+
+function renderNowPlayingTitle(text) {
+  nowPlayingText = text;
+  applyTitleMarquee();
+}
+
+// A title that does not fit one line crawls to its end and back, which keeps
+// the dock at its single-line height instead of growing a second row into the
+// transparent part around it.
+function applyTitleMarquee() {
+  const title = elements.nowPlayingTitle;
+  if (!title) return;
+  title.classList.remove("is-marquee");
+  title.style.removeProperty("--marquee-distance");
+  title.style.removeProperty("--marquee-duration");
+  title.replaceChildren(document.createTextNode(nowPlayingText));
+  const singleLine = smallViewport.matches || playerDrawer === "collapsed";
+  if (!singleLine || reducedMotion.matches) return;
+  // The class is applied before the measurement: it is what turns the title
+  // into a single clipped line and what keeps the crawl away from the drawer
+  // handle, so both decide how much room the title really has.
+  title.classList.add("is-marquee");
+  title.replaceChildren(marqueeRun(nowPlayingText));
+  const distance = title.scrollWidth - title.clientWidth;
+  if (distance <= 6) {
+    title.classList.remove("is-marquee");
+    title.replaceChildren(document.createTextNode(nowPlayingText));
+    return;
+  }
+  title.style.setProperty("--marquee-distance", `${-distance}px`);
+  title.style.setProperty("--marquee-duration", `${marqueeDuration(distance)}s`);
+}
+
+// One copy of the title, walked left by exactly the part that did not fit. The
+// title itself stays where it is and only clips, so the crawl never repeats the
+// name and never reaches the controls beside it.
+function marqueeRun(text) {
+  const run = document.createElement("span");
+  run.className = "now-playing-title-run";
+  run.textContent = text;
+  return run;
+}
+
+function marqueeDuration(distance) {
+  const seconds = distance / MARQUEE_PIXELS_PER_SECOND / MARQUEE_TRAVEL_SHARE;
+  return Math.round(Math.min(MARQUEE_MAX_SECONDS, Math.max(MARQUEE_MIN_SECONDS, seconds)));
 }
 
 function normalizeNoticeID(value) {

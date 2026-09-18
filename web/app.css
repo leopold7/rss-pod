@@ -358,7 +358,12 @@ input:focus-visible {
   top: calc(100% + 12px);
   right: 0;
   width: min(330px, calc(100vw - 28px));
+  /* The panel grew a personalisation group, so it scrolls instead of running
+     off the bottom of a short screen. */
+  max-height: min(78vh, 660px);
   padding: 16px 18px 18px;
+  overflow-y: auto;
+  scrollbar-color: var(--line-strong) transparent;
   border: 1px solid var(--glass-border);
   border-radius: 16px;
   background: rgb(255 255 255 / 96%);
@@ -449,6 +454,127 @@ input:focus-visible {
 }
 
 .settings-select:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The personalisation group lists a choice per row: the label takes the width
+   and the switch sits at the far end, the way a setting list reads. */
+.settings-switches {
+  display: grid;
+  gap: 10px;
+}
+
+/* A named group of switches inside the personalisation section. It keeps
+   margins of its own and rounds off as one card, so a handful of choices reads
+   as a block instead of a run of loose rows. */
+.settings-group {
+  padding: 12px 14px;
+  border: 1px solid rgb(191 213 236 / 52%);
+  border-radius: 14px;
+  background: rgb(226 239 252 / 42%);
+}
+
+.settings-group + .settings-group {
+  margin-top: 10px;
+}
+
+/* The cache belongs to the switch that builds it, so it stays in that card. */
+.settings-group .settings-cache {
+  margin-top: 10px;
+}
+
+.settings-sublabel {
+  margin: 0 0 10px;
+  color: var(--blue-hover);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-switch-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--navy);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.settings-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgb(174 207 240 / 72%);
+  border-radius: 999px;
+  background: rgb(206 224 243 / 78%);
+  box-shadow: inset 0 1px 2px rgb(55 106 151 / 12%);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.settings-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgb(35 106 176 / 26%);
+  transition: transform 180ms ease;
+}
+
+.settings-switch[aria-checked="true"] {
+  border-color: rgb(117 175 237 / 82%);
+  background: linear-gradient(135deg, #67b9ff, var(--blue));
+}
+
+.settings-switch[aria-checked="true"] .settings-switch-knob {
+  transform: translateX(20px);
+}
+
+.settings-switch:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.settings-cache {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-cache-clear {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid rgb(191 213 236 / 66%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 72%);
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settings-cache-clear:hover {
+  border-color: rgb(117 175 237 / 72%);
+  background: var(--surface-blue);
+  color: var(--blue-hover);
+}
+
+.settings-cache-clear:focus-visible {
   outline: 4px solid var(--focus);
   outline-offset: 2px;
 }
@@ -584,6 +710,130 @@ input:focus-visible {
   padding-inline: 12px;
 }
 
+/* The "all" control carries a caret that opens the two choices as a menu. The
+   caret has to be a sibling of the label, because one control cannot sit inside
+   another, so the group is what the two share: both take the same colour, and
+   the underline of a selected tab runs under the caret as well. The control
+   paints no box of its own, so nothing is ever framed around only part of it. */
+.shared-control {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  gap: 0;
+}
+
+/* The frame a tab or a filter would draw is switched off here, so the two
+   halves stay flat and the accent is the only thing that marks them. */
+.shared-control > .date-tab,
+.shared-control > .source-filter {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.shared-control > .date-tab:hover,
+.shared-control > .source-filter:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* The underline of a selected tab belongs to the group, so it also runs under
+   the caret instead of stopping at the label. */
+.shared-control > .date-tab::after {
+  display: none;
+}
+
+.date-tab-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* The accent following the pointer is the whole hover state: a box appearing
+   around the control whenever it is opened was the noise, not the feedback. */
+.date-tab-caret:hover,
+.date-tab-caret[aria-expanded="true"] {
+  color: var(--blue-hover);
+}
+
+.date-tab-caret:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Tab row: the group turns blue on hover and a selected tab underlines it. */
+.date-tabs .shared-control > .date-tab {
+  padding-right: 4px;
+  color: inherit;
+}
+
+.date-tabs .shared-control:hover,
+.date-tabs .shared-control:has(.date-tab[aria-selected="true"]) {
+  color: var(--blue);
+}
+
+.date-tabs .shared-control:has(.date-tab[aria-selected="true"])::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 5px;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(90deg, var(--blue), #69b9fb);
+  content: "";
+}
+
+/* Feed row: the pill of a selected filter is the group, so the caret sits
+   inside it instead of being left beside it. Only the accent changes on hover,
+   so opening the menu never paints a box under the pointer. */
+/* The pill of a selected filter is the group, so the group is what has to carry
+   the corner radius a filter has. */
+.source-filters .shared-control {
+  border-radius: 10px;
+}
+
+.source-filters .shared-control > .source-filter {
+  padding-right: 6px;
+  color: inherit;
+}
+
+.source-filters .shared-control:hover,
+.source-filters .shared-control:has(.source-filter[aria-pressed="true"]) {
+  color: var(--blue-hover);
+}
+
+.source-filters .shared-control:has(.source-filter[aria-pressed="true"]) {
+  background: linear-gradient(135deg, rgb(242 249 255 / 96%), rgb(218 237 255 / 88%));
+  box-shadow: inset 0 0 0 1px rgb(126 181 239 / 52%), inset 0 1px 0 rgb(255 255 255 / 92%), 0 5px 14px rgb(79 142 247 / 10%);
+}
+
+/* The selected and hover rules of a bare tab or filter come later in this file,
+   so flattening the two halves has to outrank them rather than follow them. */
+.date-tabs .shared-control > .date-tab[aria-selected="true"],
+.source-filters .shared-control > .source-filter:hover,
+.source-filters .shared-control > .source-filter[aria-pressed="true"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.date-tab-caret-icon {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
 .source-filter-section {
   display: flex;
   align-items: center;
@@ -697,6 +947,10 @@ input:focus-visible {
   background: rgb(255 255 255 / 74%);
   box-shadow: none;
   cursor: pointer;
+  /* A long press opens the row actions, so the browser must not start a text
+     selection or show its own callout instead. */
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .episode-row:focus-visible {
@@ -854,6 +1108,13 @@ input:focus-visible {
   white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+/* An episode that played through fades back, but only once the listener asked
+   for it in the personalisation settings. */
+.episode-title.is-listened {
+  color: var(--muted);
+  opacity: 0.7;
 }
 
 .episode-time {
@@ -1064,6 +1325,40 @@ input:focus-visible {
   white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+/* A title wider than the line it has crawls to its end and back instead of
+   being cut off. The title keeps its place and only clips, while the single run
+   inside it walks left by exactly the part that did not fit, so the crawl never
+   repeats the name and its pace follows the distance measured in the script. */
+.now-playing-title.is-marquee {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-line-clamp: unset;
+}
+
+.now-playing-title-run {
+  display: inline-block;
+  white-space: nowrap;
+  animation: now-playing-crawl var(--marquee-duration, 24s) ease-in-out infinite;
+}
+
+@keyframes now-playing-crawl {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+
+  45%,
+  57% {
+    transform: translateX(var(--marquee-distance, 0px));
+  }
+
+  90%,
+  100% {
+    transform: translateX(0);
+  }
 }
 
 .now-playing-label {
@@ -1499,6 +1794,10 @@ input:focus-visible {
     font-size: 14px;
   }
 
+  .source-filters .shared-control {
+    border-radius: 9px;
+  }
+
   .episode-region {
     padding: var(--section-gap) 10px 0;
   }
@@ -1603,15 +1902,30 @@ input:focus-visible {
     font-size: 11px;
   }
 
+  /* One line keeps the dock inside the height the shell reserves for it; a
+     title that does not fit crawls instead of growing a second row, which used
+     to push the transport controls past the dock's own border. */
   .now-playing-title {
+    display: block;
     margin: 2px 0;
+    overflow: hidden;
     font-size: 16px;
+    text-overflow: clip;
+    white-space: nowrap;
+    -webkit-line-clamp: unset;
   }
 
   /* While the dock is open the handle floats over its top-right corner, which
      is where the title would otherwise run. */
   :root:not([data-player-drawer="collapsed"]) .now-playing-title {
     padding-right: 44px;
+  }
+
+  /* A crawling title slides, so the room the handle needs comes off the box
+     itself: padding would still let the text run underneath the handle. */
+  :root:not([data-player-drawer="collapsed"]) .now-playing-title.is-marquee {
+    margin-right: 44px;
+    padding-right: 0;
   }
 
   .progress-row {
@@ -1682,6 +1996,14 @@ input:focus-visible {
   *::after {
     scroll-behavior: auto !important;
     transition: none !important;
+  }
+
+  .now-playing-title-run {
+    animation: none !important;
+  }
+
+  .popup-menu {
+    animation: none !important;
   }
 
   .toast {
@@ -1814,6 +2136,152 @@ input:focus-visible {
     opacity: 0;
     transform: translate(-50%, 8px);
   }
+}
+
+/* Dark theme: the pill of a selected feed moves to the group as well. */
+:root[data-theme="dark"] .source-filters .shared-control:has(.source-filter[aria-pressed="true"]) {
+  background: linear-gradient(135deg, rgb(45 73 111 / 94%), rgb(31 53 82 / 88%));
+  box-shadow: inset 0 0 0 1px rgb(110 168 251 / 42%), inset 0 1px 0 rgb(255 255 255 / 8%), 0 5px 14px rgb(0 0 0 / 28%);
+}
+
+/* Dark theme for the named group inside the personalisation section. */
+:root[data-theme="dark"] .settings-group {
+  border-color: rgb(80 116 160 / 42%);
+  background: rgb(24 38 57 / 62%);
+}
+
+:root[data-theme="dark"] .settings-sublabel {
+  color: var(--blue-hover);
+}
+
+/* Dark theme for the personalisation group, the shared menu, and the caret on
+   the "All" tab. */
+:root[data-theme="dark"] .settings-switch {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(255 255 255 / 12%);
+}
+
+:root[data-theme="dark"] .settings-switch[aria-checked="true"] {
+  border-color: rgb(110 168 251 / 58%);
+  background: linear-gradient(135deg, #3f83f1, #2f6ed5);
+}
+
+:root[data-theme="dark"] .settings-switch-knob {
+  background: #dbe7f5;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 38%);
+}
+
+:root[data-theme="dark"] .settings-cache-clear {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(255 255 255 / 8%);
+  color: var(--navy);
+}
+
+:root[data-theme="dark"] .settings-cache-clear:hover {
+  border-color: rgb(110 168 251 / 58%);
+  background: rgb(110 168 251 / 16%);
+}
+
+:root[data-theme="dark"] .popup-menu {
+  background: rgb(23 35 52 / 97%);
+  box-shadow: 0 20px 44px rgb(0 0 0 / 48%), inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .popup-menu-item:hover:not(:disabled) {
+  background: rgb(110 168 251 / 16%);
+}
+
+:root[data-theme="dark"] .episode-title.is-listened {
+  color: var(--muted);
+}
+
+/* Both the "All" dropdown and a long press on a row open this menu. It is
+   fixed to the viewport because it is anchored to elements that live inside
+   scrolling rows, which would clip it. */
+.popup-menu {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  left: 0;
+  display: grid;
+  min-width: 190px;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 97%);
+  box-shadow: 0 20px 44px rgb(35 106 176 / 22%), inset 0 1px 0 rgb(255 255 255 / 92%);
+  backdrop-filter: blur(20px) saturate(140%);
+  animation: popup-menu-in 140ms ease-out;
+}
+
+@keyframes popup-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.popup-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.popup-menu-item:hover:not(:disabled) {
+  background: var(--surface-blue);
+  color: var(--blue-hover);
+}
+
+.popup-menu-item:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.popup-menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.75;
+}
+
+.popup-menu-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.popup-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popup-menu-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.popup-menu-check {
+  width: 18px;
+  height: 18px;
+  fill: var(--blue);
 }
 
 /* Dark theme. The device preference and the header switch both resolve to
