@@ -5,6 +5,7 @@ const THEME_KEY = "rss-pod.theme";
 const THEME_MODES = ["system", "light", "dark"];
 const DISPLAY_KEY = "rss-pod.display-mode";
 const DISPLAY_MODES = ["date", "category"];
+const DEFAULT_CATEGORY_KEY = "rss-pod.default-category";
 const PLAYER_DRAWER_KEY = "rss-pod.player-drawer";
 const PLAYER_DRAWER_MODES = ["expanded", "collapsed"];
 const THEME_COLORS = { light: "#f4f9ff", dark: "#0b1420" };
@@ -34,6 +35,7 @@ const copy = {
     themeSettingLabel: "Color theme",
     displaySettingLabel: "Layout",
     displayModes: { date: "By date", category: "By feed" },
+    categorySettingLabel: "Default category",
     categoryTabsLabel: "Choose a feed",
     dateTabsLabel: "Choose a date",
     carouselRole: "carousel",
@@ -97,6 +99,7 @@ const copy = {
     themeSettingLabel: "主题设置",
     displaySettingLabel: "显示设置",
     displayModes: { date: "按日期", category: "按分类" },
+    categorySettingLabel: "默认分类",
     categoryTabsLabel: "选择分类",
     dateTabsLabel: "选择日期",
     carouselRole: "轮播",
@@ -202,6 +205,8 @@ const elements = {
   settingsThemeSection: document.querySelector("#settings-theme-section"),
   settingsThemeLabel: document.querySelector("#settings-theme-label"),
   settingsDisplayLabel: document.querySelector("#settings-display-label"),
+  settingsCategoryLabel: document.querySelector("#settings-category-label"),
+  settingsCategorySelect: document.querySelector("#settings-default-category"),
   settingsLanguageLabel: document.querySelector("#settings-language-label"),
   settingsGithubLink: document.querySelector("#settings-github-link"),
   themeModeButtons: [...document.querySelectorAll("[data-theme-mode]")],
@@ -244,6 +249,10 @@ let themePreference = readThemePreference();
 // The list groups by day unless the listener picked categories in the settings
 // panel. Both choices live in this browser for the current site.
 let displayMode = readDisplayPreference();
+// The feed the list opens on. It is applied to the first payload of the page,
+// so a later poll never pulls a listener back after they swiped elsewhere.
+let defaultCategory = readDefaultCategoryPreference();
+let defaultCategoryApplied = false;
 // The player dock folds into a drawer so the list can take the screen back.
 let playerDrawer = readPlayerDrawerPreference();
 
@@ -271,6 +280,7 @@ const state = {
 // rendered from the header controls.
 const slider = initEpisodeSlider();
 
+renderCategorySetting();
 updateGreeting();
 window.setInterval(updateGreeting, 60_000);
 document.addEventListener("visibilitychange", () => {
@@ -394,6 +404,16 @@ function applyPayload(payload) {
     .map(normalizeEpisode)
     .filter((episode) => episode.id && (episode.audioURL !== "" || episode.state !== "ready"))
     .sort((a, b) => b.sortTime - a.sortTime);
+  applyDefaultCategory();
+  renderCategorySetting();
+}
+
+// The default feed only applies to the first payload of the page: a poll that
+// lands later has to leave the page the listener swiped to alone.
+function applyDefaultCategory() {
+  if (defaultCategoryApplied) return;
+  defaultCategoryApplied = true;
+  state.activeSource = resolveCategory(defaultCategory);
 }
 
 // A running download is the only reason to poll: the episode list already
@@ -588,9 +608,17 @@ function slotLabel(slot) {
 // and orders it by date, so a feed reads as one continuous list; date mode stays
 // on the selected day.
 function slotEpisodes(slot) {
-  const fromSource = (episode) => slot.source === "all" || episode.sourceID === slot.source;
-  if (displayMode === "category") return state.episodes.filter(fromSource);
-  return state.episodes.filter((episode) => episode.dayKey === slot.date && fromSource(episode));
+  if (displayMode === "category") {
+    return state.episodes.filter((episode) => inSource(episode, slot.source));
+  }
+  return state.episodes.filter(
+    (episode) => episode.dayKey === slot.date && inSource(episode, slot.source),
+  );
+}
+
+// A slot either shows one feed or the whole list.
+function inSource(episode, sourceID) {
+  return sourceID === "all" || episode.sourceID === sourceID;
 }
 
 // Swiper moves the pages sideways: a finger, a mouse drag, a touchpad swipe and
@@ -1207,6 +1235,7 @@ function applyLocale() {
   elements.settingsTitle.textContent = copy.settingsTitle;
   elements.settingsThemeLabel.textContent = copy.themeSettingLabel;
   elements.settingsDisplayLabel.textContent = copy.displaySettingLabel;
+  elements.settingsCategoryLabel.textContent = copy.categorySettingLabel;
   // The settings panel repeats both controls for phones, where the header
   // hides them; the label text is the only thing they need here.
   elements.settingsLanguageLabel.textContent = copy.languageLabel;
@@ -1253,6 +1282,11 @@ function readThemePreference() {
 function readDisplayPreference() {
   const stored = readStoredString(DISPLAY_KEY);
   return DISPLAY_MODES.includes(stored) ? stored : "date";
+}
+
+// "all" is both the default and the absence of a stored choice.
+function readDefaultCategoryPreference() {
+  return readStoredString(DEFAULT_CATEGORY_KEY) || "all";
 }
 
 function readPlayerDrawerPreference() {
@@ -1311,6 +1345,11 @@ function initSettings() {
   for (const button of elements.displayModeButtons) {
     button.addEventListener("click", () => setDisplayMode(button.dataset.displayMode));
   }
+  if (elements.settingsCategorySelect) {
+    elements.settingsCategorySelect.addEventListener("change", () =>
+      setDefaultCategory(elements.settingsCategorySelect.value),
+    );
+  }
   renderDisplaySettings();
 }
 
@@ -1341,6 +1380,40 @@ function renderDisplaySettings() {
   for (const button of elements.displayModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.displayMode === displayMode));
   }
+}
+
+// The default feed is a dropdown rather than a segmented control, because a
+// deployment can follow more feeds than would fit in one row. Its options repeat
+// the header tabs, "all" first, so both read in the same order.
+function renderCategorySetting() {
+  const select = elements.settingsCategorySelect;
+  if (!select) return;
+  const options = sourceChoices().map((choice) => {
+    const option = document.createElement("option");
+    option.value = choice.id;
+    option.textContent = choice.name;
+    return option;
+  });
+  select.replaceChildren(...options);
+  select.value = resolveCategory(defaultCategory);
+}
+
+// A feed the deployment no longer follows falls back to the whole list.
+function resolveCategory(sourceID) {
+  return sourceChoices().some((choice) => choice.id === sourceID) ? sourceID : "all";
+}
+
+// Picking a feed stores it and shows it right away, so the panel previews what
+// the next visit will open on.
+function setDefaultCategory(sourceID) {
+  defaultCategory = resolveCategory(sourceID);
+  // An explicit pick is the current choice as well, so the first payload must
+  // not override it.
+  defaultCategoryApplied = true;
+  if (defaultCategory === "all") removeStorage(DEFAULT_CATEGORY_KEY);
+  else writeStorage(DEFAULT_CATEGORY_KEY, defaultCategory);
+  renderCategorySetting();
+  selectSlot({ source: defaultCategory });
 }
 
 // The dock doubles as a drawer: folding it away hands the rows it used back to
@@ -1452,9 +1525,14 @@ function setStatus(message) {
 
 function selectInitialEpisode() {
   const availableDateKeys = new Set(state.dateOptions.map((option) => option.key));
-  const latestEpisode = state.episodes.find(
-    (candidate) => availableDateKeys.has(candidate.dayKey) && isPlayable(candidate),
-  );
+  const inWindow = (candidate) => availableDateKeys.has(candidate.dayKey) && isPlayable(candidate);
+  // The list opens on the selected feed, so the first episode comes from it when
+  // it has one. Falling back to every feed keeps the player usable when the
+  // default feed has nothing in the window.
+  const latestEpisode =
+    state.episodes.find(
+      (candidate) => inWindow(candidate) && inSource(candidate, state.activeSource),
+    ) || state.episodes.find(inWindow);
   if (!latestEpisode) {
     renderAll();
     return;

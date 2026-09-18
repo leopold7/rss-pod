@@ -95,6 +95,16 @@
                     <button type="button" data-display-mode="category">By feed</button>
                   </div>
                 </section>
+                <!-- The options are the feeds the deployment follows, so the
+                     dropdown is filled in once the episode list has loaded. -->
+                <section id="settings-category-section" class="settings-section">
+                  <p id="settings-category-label" class="settings-label">Default category</p>
+                  <select
+                    id="settings-default-category"
+                    class="settings-select"
+                    aria-labelledby="settings-category-label"
+                  ></select>
+                </section>
                 <!-- The header keeps these two controls on wide screens; on phones
                      they move in here so the header stays down to icon buttons. -->
                 <section id="settings-language-section" class="settings-section settings-mobile-only">

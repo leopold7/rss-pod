@@ -429,6 +429,30 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+/* A deployment can follow more feeds than fit one row, so the default category
+   is a dropdown that repeats the look of the switcher above it. */
+.settings-select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgb(191 213 236 / 66%);
+  border-radius: 12px;
+  background: rgb(226 239 252 / 64%);
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 78%);
+}
+
+.settings-select:hover {
+  border-color: rgb(117 175 237 / 72%);
+}
+
+.settings-select:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
 /* The settings panel only takes over the two header controls that do not fit a
    phone header, so wide screens keep the layout they had. */
 .settings-mobile-only {
@@ -1892,6 +1916,12 @@ input:focus-visible {
 :root[data-theme="dark"] .settings-segment button[aria-pressed="true"] {
   background: rgb(255 255 255 / 10%);
   box-shadow: 0 4px 12px rgb(0 0 0 / 24%);
+}
+
+:root[data-theme="dark"] .settings-select {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(24 38 57 / 74%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
 /* The repository mark paints itself with currentColor, which an embedded <img>
