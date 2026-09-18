@@ -232,6 +232,11 @@ down to a slim bar that keeps the play control and the current title, which hand
 the rest of the screen to the episode list. Like the other preferences, the
 state is stored in the current browser.
 
+The episode list pages sideways, one page per header control: a swipe walks the
+feeds of the current day before it hands over to the next day, while a click on a
+tab jumps straight to its page. Swiper does the paging; it ships inside the
+embedded UI instead of loading from a CDN (see `web/vendor/swiper/NOTICE.md`).
+
 ### Poll-only sources
 
 A source can be left to discovery only. Polling then stores new entries without

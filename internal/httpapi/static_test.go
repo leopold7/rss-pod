@@ -242,6 +242,45 @@ func TestPlayerWebHandlerServesGitHubIcon(t *testing.T) {
 	}
 }
 
+func TestPlayerWebHandlerServesVendoredSwiper(t *testing.T) {
+	t.Parallel()
+
+	// The list pages sideways with Swiper, which ships inside the binary: the
+	// player must not need a CDN for it.
+	for _, asset := range []string{
+		"/vendor/swiper/swiper-bundle.min.js",
+		"/vendor/swiper/swiper-bundle.min.css",
+	} {
+		request := httptest.NewRequest(http.MethodGet, asset, nil)
+		response := httptest.NewRecorder()
+		playerWebHandler().ServeHTTP(response, request)
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", asset, response.Code)
+		}
+		if response.Body.Len() == 0 {
+			t.Fatalf("embedded %s is empty", asset)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/en", nil)
+	response := httptest.NewRecorder()
+	playerWebHandler().ServeHTTP(response, request)
+
+	body := response.Body.String()
+	if !strings.Contains(body, `id="episode-slider"`) || !strings.Contains(body, `class="swiper-wrapper"`) {
+		t.Fatal("player shell does not contain the paging episode list")
+	}
+	swiper := strings.Index(body, "/vendor/swiper/swiper-bundle.min.css")
+	player := strings.Index(body, `href="/app.css"`)
+	if swiper < 0 || player < 0 {
+		t.Fatalf("player shell is missing a stylesheet: swiper=%d player=%d", swiper, player)
+	}
+	if swiper > player {
+		t.Fatalf("vendored stylesheet is not loaded before the player stylesheet: swiper=%d player=%d", swiper, player)
+	}
+}
+
 func TestPlayerWebHandlerServesDownloadIcon(t *testing.T) {
 	t.Parallel()
 

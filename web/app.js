@@ -36,6 +36,8 @@ const copy = {
     displayModes: { date: "By date", category: "By feed" },
     categoryTabsLabel: "Choose a feed",
     dateTabsLabel: "Choose a date",
+    carouselRole: "carousel",
+    slideRole: "slide",
     noticeLabel: "Notice",
     dismissNotice: "Dismiss notice",
     sourceSectionLabel: "Filter by source",
@@ -97,6 +99,8 @@ const copy = {
     displayModes: { date: "按日期", category: "按分类" },
     categoryTabsLabel: "选择分类",
     dateTabsLabel: "选择日期",
+    carouselRole: "轮播",
+    slideRole: "幻灯片",
     noticeLabel: "通知",
     dismissNotice: "关闭通知",
     sourceSectionLabel: "按来源筛选",
@@ -211,7 +215,8 @@ const elements = {
   sourceFilterLabel: document.querySelector("#source-filter-label"),
   sourceFilters: document.querySelector("#source-filters"),
   episodeRegion: document.querySelector("#episode-region"),
-  episodeList: document.querySelector("#episode-list"),
+  episodeSlider: document.querySelector("#episode-slider"),
+  episodeWrapper: document.querySelector("#episode-slider .swiper-wrapper"),
   statusMessage: document.querySelector("#status-message"),
   rowTemplate: document.querySelector("#episode-row-template"),
   audio: document.querySelector("#audio"),
@@ -262,6 +267,10 @@ const state = {
   startingEpisodes: new Set(),
 };
 
+// Swiper owns the sideways paging of the episode list; the pages themselves are
+// rendered from the header controls.
+const slider = initEpisodeSlider();
+
 updateGreeting();
 window.setInterval(updateGreeting, 60_000);
 document.addEventListener("visibilitychange", () => {
@@ -274,6 +283,11 @@ document.addEventListener("visibilitychange", () => {
   // Coming back to the page is a good moment to catch up with a download.
   if (state.episodes.some((episode) => episode.state === "processing")) refreshEpisodes();
 });
+
+// The poll timer is declared before the first load: a load that has no request
+// to await reaches the polling code in the same tick.
+const REFRESH_INTERVAL = 5_000;
+let refreshTimer = 0;
 
 bindPlayerEvents();
 bindNoticeEvents();
@@ -382,9 +396,6 @@ function applyPayload(payload) {
     .sort((a, b) => b.sortTime - a.sortTime);
 }
 
-const REFRESH_INTERVAL = 5_000;
-let refreshTimer = 0;
-
 // A running download is the only reason to poll: the episode list already
 // reports the state and the stage of every episode, which also brings a page
 // that was reloaded mid-download back up to date.
@@ -466,17 +477,14 @@ function renderTabs() {
   elements.dateTabs.replaceChildren();
 
   if (byCategory) {
-    for (const source of [{ id: "all", name: copy.allSources }, ...state.sources]) {
+    for (const source of sourceChoices()) {
       elements.dateTabs.append(
         createTab(
           source.id,
           source.name,
           countEpisodesForSource(source.id),
           state.activeSource === source.id,
-          () => {
-            state.activeSource = source.id;
-            renderAll();
-          },
+          () => selectSlot({ source: source.id }),
         ),
       );
     }
@@ -490,10 +498,7 @@ function renderTabs() {
         `${option.relativeLabel} ${option.monthDay}`,
         countEpisodesForDate(option.key),
         state.activeDate === option.key,
-        () => {
-          state.activeDate = option.key;
-          renderAll();
-        },
+        () => selectSlot({ date: option.key }),
       ),
     );
   }
@@ -519,12 +524,18 @@ function createTab(key, label, count, selected, onSelect) {
   return button;
 }
 
+// The feed row always offers "all" first, which is also where a swipe into a
+// new date row starts over.
+function sourceChoices() {
+  return [{ id: "all", name: copy.allSources }, ...state.sources];
+}
+
 function renderSourceFilters() {
   // The header tabs already list every feed in category mode, so the second
   // row would only repeat them.
   elements.sourceFilterSection.hidden = displayMode === "category";
   elements.sourceFilters.replaceChildren();
-  const sources = [{ id: "all", name: copy.allSources }, ...state.sources];
+  const sources = sourceChoices();
   for (const source of sources) {
     const button = document.createElement("button");
     button.className = "source-filter";
@@ -532,94 +543,275 @@ function renderSourceFilters() {
     button.textContent = source.name;
     button.dataset.source = source.id;
     button.setAttribute("aria-pressed", String(state.activeSource === source.id));
-    button.addEventListener("click", () => {
-      state.activeSource = source.id;
-      renderSourceFilters();
-      renderEpisodeList();
-    });
+    button.addEventListener("click", () => selectSlot({ source: source.id }));
     elements.sourceFilters.append(button);
   }
 }
 
-function renderEpisodeList() {
-  const previousScrollTop = elements.episodeList.scrollTop;
-  elements.episodeList.replaceChildren();
-  const episodes = visibleEpisodes();
-  if (episodes.length === 0) {
-    setStatus(displayMode === "category" ? copy.emptyCategory : copy.empty);
-    updateQueueButtons();
+// The header controls read as one chain rather than as two rows: in date mode
+// every date offers the same row of feeds, so a swipe walks those feeds first
+// and hands the step over to the following date once the last feed is behind
+// it. Category mode has a single row, so there the feeds are the whole chain.
+// Every control owns one page of the episode list.
+function listSlots() {
+  const sources = sourceChoices().map((source) => source.id);
+  if (displayMode === "category") return sources.map((source) => ({ date: "", source }));
+  return state.dateOptions.flatMap((option) =>
+    sources.map((source) => ({ date: option.key, source })),
+  );
+}
+
+function activeSlot() {
+  return { date: state.activeDate, source: state.activeSource };
+}
+
+function activeSlotIndex(slots) {
+  return slots.findIndex(
+    (slot) => slot.source === state.activeSource && (!slot.date || slot.date === state.activeDate),
+  );
+}
+
+function slotKey(slot) {
+  return `${slot.date}|${slot.source}`;
+}
+
+// A page is named by the day and feed it shows, because that is what a listener
+// needs to hear rather than the number of the page.
+function slotLabel(slot) {
+  const option = state.dateOptions.find((candidate) => candidate.key === slot.date);
+  const feed = sourceChoices().find((candidate) => candidate.id === slot.source);
+  const feedName = feed ? feed.name : slot.source;
+  return option ? `${option.relativeLabel} ${option.monthDay} · ${feedName}` : feedName;
+}
+
+// The episodes behind one header control. Category mode keeps the whole window
+// and orders it by date, so a feed reads as one continuous list; date mode stays
+// on the selected day.
+function slotEpisodes(slot) {
+  const fromSource = (episode) => slot.source === "all" || episode.sourceID === slot.source;
+  if (displayMode === "category") return state.episodes.filter(fromSource);
+  return state.episodes.filter((episode) => episode.dayKey === slot.date && fromSource(episode));
+}
+
+// Swiper moves the pages sideways: a finger, a mouse drag, a touchpad swipe and
+// a sideways wheel all walk the same chain of header controls. It is vendored
+// under web/vendor/swiper and loaded before this module.
+function initEpisodeSlider() {
+  const container = elements.episodeSlider;
+  if (!container || typeof Swiper !== "function") {
+    // Without the vendored slider the list still renders, it just cannot page.
+    container?.classList.add("is-static");
+    return null;
+  }
+  const instance = new Swiper(container, {
+    slidesPerView: 1,
+    spaceBetween: 0,
+    speed: 260,
+    // A slow drag has to travel a fifth of the page to count, while a quick
+    // flick pages right away.
+    threshold: 8,
+    longSwipesRatio: 0.2,
+    longSwipesMs: 300,
+    shortSwipes: true,
+    // Dragging past the first or the last page stretches instead of following.
+    resistanceRatio: 0.3,
+    watchOverflow: true,
+    // The pages are rebuilt whenever the episodes change.
+    observer: true,
+    observeParents: true,
+    // Without this the browser reads a touchpad swipe as a back or forward
+    // navigation instead of scrolling the list.
+    mousewheel: { forceToAxis: true, sensitivity: 1, releaseOnEdges: false },
+    // Arrow keys stay with the player controls instead of paging the list.
+    keyboard: { enabled: false },
+    a11y: {
+      enabled: true,
+      containerMessage: copy.episodeRegionLabel,
+      containerRoleDescriptionMessage: copy.carouselRole,
+      itemRoleDescriptionMessage: copy.slideRole,
+      // Each page is labelled from its day and feed instead of its position.
+      slideLabelMessage: "",
+    },
+  });
+  instance.on("slideChange", syncActiveSlot);
+  return instance;
+}
+
+// Everything that follows the page in front: the highlighted control, the empty
+// state and the rows the queue plays.
+function syncActiveSlot() {
+  const slot = slider ? listSlots()[slider.activeIndex] : activeSlot();
+  if (!slot) return;
+  state.activeSource = slot.source;
+  if (slot.date) state.activeDate = slot.date;
+  renderTabs();
+  renderSourceFilters();
+  revealActiveControls();
+  renderSlotStatus();
+  updateQueueButtons();
+}
+
+// The header controls pick a page by name, so a click lands on the same chain
+// the swipe walks.
+function selectSlot(slot) {
+  state.activeSource = slot.source;
+  if (slot.date) state.activeDate = slot.date;
+  const index = activeSlotIndex(listSlots());
+  if (!slider || index < 0) {
+    renderAll();
     return;
   }
+  // A click on the page already in front still has to refresh the header rows
+  // and the empty state, which no slide change will announce.
+  if (index === slider.activeIndex) syncActiveSlot();
+  else slider.slideTo(index);
+}
 
-  setStatus("");
-  const fragment = document.createDocumentFragment();
-  for (const episode of episodes) {
-    const row = elements.rowTemplate.content.firstElementChild.cloneNode(true);
-    row.dataset.episodeId = episode.id;
-    row.classList.toggle("is-current", episode.id === state.currentEpisodeID);
-    row.classList.toggle("is-playing", episode.id === state.currentEpisodeID && !elements.audio.paused);
-
-    const playButton = row.querySelector(".episode-play-button");
-    const playIcon = row.querySelector(".episode-play-button img");
-    const isPlaying = episode.id === state.currentEpisodeID && !elements.audio.paused;
-    const controlLabel = episodeControlLabel(episode, isPlaying);
-    row.classList.toggle("is-generating", episode.state === "processing");
-    row.classList.toggle("is-generation-failed", episode.state === "failed");
-    playButton.dataset.state = episode.state;
-    playButton.setAttribute("aria-label", controlLabel);
-    playButton.title = controlLabel;
-    playIcon.src =
-      episode.state === "ready" && isPlaying ? "/icons/pause.svg" : episodeControlIcon(episode);
-    playButton.addEventListener("click", () => activateEpisode(episode));
-
-    row.tabIndex = 0;
-    row.setAttribute("aria-label", controlLabel);
-    row.addEventListener("click", (event) => {
-      if (event.target.closest("button, a, input")) return;
-      activateEpisode(episode);
-    });
-    row.addEventListener("keydown", (event) => {
-      if (event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
-      event.preventDefault();
-      activateEpisode(episode);
-    });
-
-    // In category mode every row repeats the same feed, so that column carries
-    // the publish date instead of the feed name.
-    const source = row.querySelector(".episode-source");
-    source.classList.toggle("is-date", displayMode === "category");
-    source.textContent =
-      displayMode === "category" ? episodeDateLabel(episode) : sourceName(episode.sourceID);
-    const title = row.querySelector(".episode-title");
-    title.textContent = episode.title;
-    title.title = episode.title;
-
-    const time = row.querySelector(".episode-time");
-    renderEpisodeDuration(time, episode.durationSeconds);
-    // Visibility only applies to published episodes, which are the playable ones.
-    if (isAdminPage && adminCSRF && isPlayable(episode)) {
-      row.classList.add("admin-episode-row");
-      const visibilityButton = document.createElement("button");
-      visibilityButton.type = "button";
-      visibilityButton.className = "admin-visibility";
-      row.classList.toggle("is-hidden", episode.hidden);
-      visibilityButton.textContent = episode.hidden ? adminCopy.restore : adminCopy.hide;
-      visibilityButton.setAttribute("aria-label", `${visibilityButton.textContent}: ${episode.title}`);
-      visibilityButton.disabled = adminBusy;
-      visibilityButton.addEventListener("click", () => setAdminVisibility(episode));
-      if (episode.hidden) {
-        const badge = document.createElement("span");
-        badge.className = "admin-hidden-badge";
-        badge.textContent = adminCopy.hidden;
-        title.prepend(badge);
-      }
-      row.append(visibilityButton);
-    }
-    fragment.append(row);
+// Both header rows can scroll sideways, and redrawing the tabs starts theirs
+// over, so the control the list is on is brought back into view.
+function revealActiveControls() {
+  const controls = [
+    elements.dateTabs.querySelector('.date-tab[aria-selected="true"]'),
+    elements.sourceFilters.querySelector('.source-filter[aria-pressed="true"]'),
+  ];
+  for (const control of controls) {
+    if (control) control.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
-  elements.episodeList.append(fragment);
-  elements.episodeList.scrollTop = previousScrollTop;
+}
+
+// Only the page in front reports whether it is empty, because the message covers
+// the list rather than one page of it.
+function renderSlotStatus() {
+  if (visibleEpisodes().length > 0) {
+    setStatus("");
+    return;
+  }
+  setStatus(displayMode === "category" ? copy.emptyCategory : copy.empty);
+}
+
+// The list is one page per header control, and every page is rebuilt together
+// so a row shows the same episode state wherever it appears.
+function renderEpisodeList() {
+  // A finger on the list owns it for the moment: a poll that lands mid-swipe
+  // would replace the page under it.
+  if (slider && slider.touching) return;
+  const scrollPositions = new Map();
+  if (slider) {
+    for (const slide of slider.slides) {
+      if (slide.dataset.slot) scrollPositions.set(slide.dataset.slot, slide.scrollTop);
+    }
+  }
+
+  const slots = listSlots();
+  const fragment = document.createDocumentFragment();
+  for (const slot of slots) fragment.append(createEpisodeSlide(slot));
+  elements.episodeWrapper.replaceChildren(fragment);
+  for (const slide of elements.episodeWrapper.children) {
+    const scrollTop = scrollPositions.get(slide.dataset.slot);
+    if (scrollTop) slide.scrollTop = scrollTop;
+  }
+
+  const index = activeSlotIndex(slots);
+  if (slider) {
+    slider.update();
+    if (index >= 0 && index !== slider.activeIndex) slider.slideTo(index, 0);
+  } else if (index >= 0) {
+    // The fallback keeps the page the header controls picked in front.
+    elements.episodeWrapper.children[index]?.classList.add("swiper-slide-active");
+  }
+  renderSlotStatus();
   updateQueueButtons();
+}
+
+// The page in front: the one that scrolls, and the one that holds the row that
+// is playing.
+function activeSlide() {
+  const index = slider ? slider.activeIndex : -1;
+  return slider && index >= 0 ? slider.slides[index] : null;
+}
+
+// One page of the list: the episodes behind a single header control. The page
+// scrolls on its own, so switching pages leaves the one in front where it was.
+function createEpisodeSlide(slot) {
+  const slide = document.createElement("div");
+  slide.className = "swiper-slide episode-slide";
+  slide.dataset.slot = slotKey(slot);
+  // Swiper labels a page by its position; the day and the feed read better.
+  slide.setAttribute("aria-label", slotLabel(slot));
+
+  const rows = document.createElement("div");
+  rows.className = "episode-rows";
+  rows.role = "list";
+  const fragment = document.createDocumentFragment();
+  for (const episode of slotEpisodes(slot)) fragment.append(createEpisodeRow(episode));
+  rows.append(fragment);
+  slide.append(rows);
+  return slide;
+}
+
+function createEpisodeRow(episode) {
+  const row = elements.rowTemplate.content.firstElementChild.cloneNode(true);
+  row.dataset.episodeId = episode.id;
+  row.classList.toggle("is-current", episode.id === state.currentEpisodeID);
+  row.classList.toggle("is-playing", episode.id === state.currentEpisodeID && !elements.audio.paused);
+
+  const playButton = row.querySelector(".episode-play-button");
+  const playIcon = row.querySelector(".episode-play-button img");
+  const isPlaying = episode.id === state.currentEpisodeID && !elements.audio.paused;
+  const controlLabel = episodeControlLabel(episode, isPlaying);
+  row.classList.toggle("is-generating", episode.state === "processing");
+  row.classList.toggle("is-generation-failed", episode.state === "failed");
+  playButton.dataset.state = episode.state;
+  playButton.setAttribute("aria-label", controlLabel);
+  playButton.title = controlLabel;
+  playIcon.src =
+    episode.state === "ready" && isPlaying ? "/icons/pause.svg" : episodeControlIcon(episode);
+  playButton.addEventListener("click", () => activateEpisode(episode));
+
+  row.tabIndex = 0;
+  row.setAttribute("aria-label", controlLabel);
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("button, a, input")) return;
+    activateEpisode(episode);
+  });
+  row.addEventListener("keydown", (event) => {
+    if (event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    activateEpisode(episode);
+  });
+
+  // In category mode every row repeats the same feed, so that column carries
+  // the publish date instead of the feed name.
+  const source = row.querySelector(".episode-source");
+  source.classList.toggle("is-date", displayMode === "category");
+  source.textContent =
+    displayMode === "category" ? episodeDateLabel(episode) : sourceName(episode.sourceID);
+  const title = row.querySelector(".episode-title");
+  title.textContent = episode.title;
+  title.title = episode.title;
+
+  const time = row.querySelector(".episode-time");
+  renderEpisodeDuration(time, episode.durationSeconds);
+  // Visibility only applies to published episodes, which are the playable ones.
+  if (isAdminPage && adminCSRF && isPlayable(episode)) {
+    row.classList.add("admin-episode-row");
+    const visibilityButton = document.createElement("button");
+    visibilityButton.type = "button";
+    visibilityButton.className = "admin-visibility";
+    row.classList.toggle("is-hidden", episode.hidden);
+    visibilityButton.textContent = episode.hidden ? adminCopy.restore : adminCopy.hide;
+    visibilityButton.setAttribute("aria-label", `${visibilityButton.textContent}: ${episode.title}`);
+    visibilityButton.disabled = adminBusy;
+    visibilityButton.addEventListener("click", () => setAdminVisibility(episode));
+    if (episode.hidden) {
+      const badge = document.createElement("span");
+      badge.className = "admin-hidden-badge";
+      badge.textContent = adminCopy.hidden;
+      title.prepend(badge);
+    }
+    row.append(visibilityButton);
+  }
+  return row;
 }
 
 // The row control plays a ready episode, starts a download for one that is
@@ -940,36 +1132,29 @@ function renderEpisodeDuration(element, durationSeconds) {
   element.setAttribute("aria-label", copy.durationLabel(element.textContent));
 }
 
+// Only the page in front scrolls: the episode that is playing sits on it, and a
+// page further along keeps its own position.
 function scrollCurrentEpisodeIntoView() {
   window.requestAnimationFrame(() => {
-    const row = [...elements.episodeList.querySelectorAll(".episode-row")].find(
+    const page = activeSlide();
+    if (!page) return;
+    const row = [...page.querySelectorAll(".episode-row")].find(
       (candidate) => candidate.dataset.episodeId === state.currentEpisodeID,
     );
     if (!row) return;
-    const listRect = elements.episodeList.getBoundingClientRect();
+    const listRect = page.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();
     if (rowRect.top >= listRect.top && rowRect.bottom <= listRect.bottom) return;
-    const top =
-      elements.episodeList.scrollTop +
-      rowRect.top -
-      listRect.top -
-      (elements.episodeList.clientHeight - rowRect.height) / 2;
+    const top = page.scrollTop + rowRect.top - listRect.top - (page.clientHeight - rowRect.height) / 2;
     // Switching sources triggers both a list render and an audio `play` event.
     // Assigning scrollTop directly keeps the final position deterministic even
     // when those updates happen within the same frame.
-    elements.episodeList.scrollTop = Math.max(0, top);
+    page.scrollTop = Math.max(0, top);
   });
 }
 
 function visibleEpisodes() {
-  const fromSource = (episode) =>
-    state.activeSource === "all" || episode.sourceID === state.activeSource;
-  // Category mode keeps the whole window and orders it by date, so a feed reads
-  // as one continuous list; date mode stays on the selected day.
-  if (displayMode === "category") return state.episodes.filter(fromSource);
-  return state.episodes.filter(
-    (episode) => episode.dayKey === state.activeDate && fromSource(episode),
-  );
+  return slotEpisodes(activeSlot());
 }
 
 // Only an episode with audio can join the playback queue: the others are still
@@ -1667,7 +1852,10 @@ async function setAdminVisibility(episode) {
   finally {
     adminBusy = false;
     renderEpisodeList();
-    const row = [...elements.episodeList.children].find((item) => item.dataset.episodeId === episode.id);
+    const page = activeSlide();
+    const row = page
+      ? [...page.querySelectorAll(".episode-row")].find((item) => item.dataset.episodeId === episode.id)
+      : null;
     row?.querySelector(".admin-visibility")?.focus();
   }
 }

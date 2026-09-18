@@ -31,7 +31,11 @@
         }
       })();
     </script>
+    <!-- Swiper pages the episode list sideways; it is vendored under vendor/
+         so the player keeps working without a CDN. -->
+    <link rel="stylesheet" href="/vendor/swiper/swiper-bundle.min.css" />
     <link rel="stylesheet" href="/app.css" />
+    <script src="/vendor/swiper/swiper-bundle.min.js"></script>
     <script type="module" src="/app.js"></script>
   </head>
   <body>
@@ -184,7 +188,11 @@
 
       <section id="episode-region" class="episode-region" aria-label="Podcast episodes">
         <p id="status-message" class="status-message" role="status" aria-live="polite">Loading podcasts…</p>
-        <div id="episode-list" class="episode-list" role="list"></div>
+        <!-- One page per header control: a swipe walks the feeds of a day before
+             it hands over to the next day. Swiper moves the pages. -->
+        <div id="episode-slider" class="episode-slider swiper">
+          <div class="swiper-wrapper"></div>
+        </div>
       </section>
 
       <section id="player-dock" class="player-dock" aria-label="Player">
