@@ -91,6 +91,31 @@
                     <button type="button" data-display-mode="category">By feed</button>
                   </div>
                 </section>
+                <!-- The header keeps these two controls on wide screens; on phones
+                     they move in here so the header stays down to icon buttons. -->
+                <section id="settings-language-section" class="settings-section settings-mobile-only">
+                  <p id="settings-language-label" class="settings-label">Language</p>
+                  <div
+                    id="settings-language-options"
+                    class="language-switcher"
+                    role="group"
+                    aria-labelledby="settings-language-label"
+                  >
+                    <a href="/en" data-locale="en" aria-current="page">EN</a>
+                    <a href="/zh-cn" data-locale="zh-CN">中文</a>
+                  </div>
+                </section>
+                <a
+                  id="settings-github-link"
+                  class="settings-link settings-mobile-only"
+                  href="https://github.com/synrise25/rss-pod"
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="View project on GitHub"
+                >
+                  <img src="/icons/github.svg" alt="" />
+                  <span>GitHub</span>
+                </a>
               </div>
             </div>
             <nav id="language-switcher" class="language-switcher" aria-label="Language">

@@ -429,6 +429,49 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+/* The settings panel only takes over the two header controls that do not fit a
+   phone header, so wide screens keep the layout they had. */
+.settings-mobile-only {
+  display: none;
+}
+
+/* Inside the panel the switcher fills the row instead of hugging its links the
+   way the header copy does. */
+#settings-language-options a {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.settings-link {
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgb(191 213 236 / 66%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 72%);
+  color: var(--navy);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.settings-link:hover {
+  border-color: rgb(117 175 237 / 72%);
+  background: var(--surface-blue);
+  color: var(--blue-hover);
+}
+
+.settings-link:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.settings-link img {
+  width: 22px;
+  height: 22px;
+}
+
 .date-tabs {
   display: flex;
   align-items: stretch;
@@ -1300,14 +1343,19 @@ input:focus-visible {
     font-size: clamp(25px, 7.4vw, 30px);
   }
 
-  .language-switcher {
-    padding: 3px;
+  /* On phones the header keeps only the settings and theme buttons: the
+     language switcher and the repository link move into the settings panel. */
+  #language-switcher,
+  #github-link {
+    display: none;
   }
 
-  .language-switcher a {
-    min-width: 42px;
-    padding: 6px 7px;
-    font-size: 12px;
+  .settings-mobile-only {
+    display: block;
+  }
+
+  .settings-link.settings-mobile-only {
+    display: flex;
   }
 
   .github-link,
@@ -1828,6 +1876,21 @@ input:focus-visible {
 /* The repository mark paints itself with currentColor, which an embedded <img>
    resolves to black, so dark mode has to lighten it explicitly. */
 :root[data-theme="dark"] .github-link img {
+  filter: brightness(0) invert(1);
+}
+
+:root[data-theme="dark"] .settings-link {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(255 255 255 / 8%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .settings-link:hover {
+  border-color: rgb(110 168 251 / 58%);
+  background: rgb(110 168 251 / 16%);
+}
+
+:root[data-theme="dark"] .settings-link img {
   filter: brightness(0) invert(1);
 }
 

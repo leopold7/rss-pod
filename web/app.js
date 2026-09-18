@@ -198,6 +198,8 @@ const elements = {
   settingsThemeSection: document.querySelector("#settings-theme-section"),
   settingsThemeLabel: document.querySelector("#settings-theme-label"),
   settingsDisplayLabel: document.querySelector("#settings-display-label"),
+  settingsLanguageLabel: document.querySelector("#settings-language-label"),
+  settingsGithubLink: document.querySelector("#settings-github-link"),
   themeModeButtons: [...document.querySelectorAll("[data-theme-mode]")],
   displayModeButtons: [...document.querySelectorAll("[data-display-mode]")],
   themeToggle: document.querySelector("#theme-toggle"),
@@ -1020,6 +1022,11 @@ function applyLocale() {
   elements.settingsTitle.textContent = copy.settingsTitle;
   elements.settingsThemeLabel.textContent = copy.themeSettingLabel;
   elements.settingsDisplayLabel.textContent = copy.displaySettingLabel;
+  // The settings panel repeats both controls for phones, where the header
+  // hides them; the label text is the only thing they need here.
+  elements.settingsLanguageLabel.textContent = copy.languageLabel;
+  elements.settingsGithubLink.setAttribute("aria-label", copy.githubLabel);
+  elements.settingsGithubLink.title = copy.githubLabel;
   for (const button of elements.themeModeButtons) {
     button.textContent = copy.themeModes[button.dataset.themeMode];
   }
