@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -135,6 +136,46 @@ func TestListPlayerSourcesReturnsOnlyPublicFields(t *testing.T) {
 	}
 	if strings.Contains(body, "disabled") || strings.Contains(body, "private.example") || strings.Contains(body, "feed") {
 		t.Fatalf("response exposes non-public source configuration: %s", body)
+	}
+}
+
+func TestPlayerConfigReportsThemeToggle(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []bool{true, false} {
+		server := &playerServer{themeToggle: want}
+		response := httptest.NewRecorder()
+		server.config(response, httptest.NewRequest(http.MethodGet, "/api/v1/player/config", nil))
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", response.Code)
+		}
+		if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-store" {
+			t.Fatalf("Cache-Control = %q, want no-store", cacheControl)
+		}
+		var payload struct {
+			ThemeToggle bool `json:"theme_toggle"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode player config: %v", err)
+		}
+		if payload.ThemeToggle != want {
+			t.Fatalf("theme_toggle = %v, want %v", payload.ThemeToggle, want)
+		}
+	}
+}
+
+func TestNewPlayerServerHonoursThemeToggleConfig(t *testing.T) {
+	t.Parallel()
+
+	disabled := false
+	if server := newPlayerServer(&config.Config{Runtime: config.RuntimeConfig{
+		HTTP: config.HTTPConfig{ThemeToggle: &disabled},
+	}}, nil); server.themeToggle {
+		t.Fatal("explicit runtime.http.theme_toggle=false should hide the switch")
+	}
+	if server := newPlayerServer(&config.Config{}, nil); !server.themeToggle {
+		t.Fatal("the theme switch should be visible when runtime.http.theme_toggle is unset")
 	}
 }
 

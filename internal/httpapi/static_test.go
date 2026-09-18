@@ -90,6 +90,30 @@ func TestPlayerWebHandlerServesChineseRoute(t *testing.T) {
 	}
 }
 
+func TestPlayerWebHandlerServesThemeToggleInsideHeaderActions(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/en", nil)
+	response := httptest.NewRecorder()
+	playerWebHandler().ServeHTTP(response, request)
+
+	body := response.Body.String()
+	language := strings.Index(body, `id="language-switcher"`)
+	theme := strings.Index(body, `id="theme-toggle"`)
+	github := strings.Index(body, `id="github-link"`)
+	if language < 0 || theme < 0 || github < 0 {
+		t.Fatalf("player shell is missing a header control: language=%d theme=%d github=%d", language, theme, github)
+	}
+	if language > theme || theme > github {
+		t.Fatalf("theme toggle is not between the language switcher and the GitHub link: language=%d theme=%d github=%d", language, theme, github)
+	}
+	for _, icon := range []string{"theme-icon-system", "theme-icon-light", "theme-icon-dark"} {
+		if !strings.Contains(body, icon) {
+			t.Fatalf("theme toggle is missing the %s icon", icon)
+		}
+	}
+}
+
 func TestPlayerWebHandlerDoesNotCaptureUnknownAPIPaths(t *testing.T) {
 	t.Parallel()
 

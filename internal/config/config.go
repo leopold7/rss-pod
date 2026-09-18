@@ -56,6 +56,9 @@ type HTTPConfig struct {
 	Listen           string `yaml:"listen"`
 	ManagementListen string `yaml:"management_listen"`
 	NoticeFile       string `yaml:"notice_file"`
+	// ThemeToggle is a pointer so an omitted value keeps the player's
+	// light/dark switch visible; only an explicit false hides it.
+	ThemeToggle *bool `yaml:"theme_toggle"`
 }
 
 func (c HTTPConfig) ManagementAddress() string {
@@ -63,6 +66,13 @@ func (c HTTPConfig) ManagementAddress() string {
 		return "127.0.0.1:8081"
 	}
 	return c.ManagementListen
+}
+
+// ThemeToggleEnabled reports whether the player shows its light/dark theme
+// switch. The switch is visible unless runtime.http.theme_toggle is explicitly
+// set to false.
+func (c HTTPConfig) ThemeToggleEnabled() bool {
+	return c.ThemeToggle == nil || *c.ThemeToggle
 }
 
 type DatabaseConfig struct {

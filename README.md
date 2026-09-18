@@ -200,6 +200,21 @@ that observes the notice as removed or empty clears the dismissal. This preferen
 is local to each browser and device. If browser storage is unavailable, dismissal
 lasts only for the current page.
 
+### Player theme
+
+The player follows the device color scheme by default. A switch between the
+language switcher and the repository link cycles through following the device,
+light and dark, and the choice is stored in the browser for the current site, so
+clearing site data or using another browser returns to the device default. The
+resolved theme is applied before the first paint, and the switch is hidden when
+the deployment sets:
+
+```yaml
+runtime:
+  http:
+    theme_toggle: false
+```
+
 The main commands are:
 
 | Command | Purpose |

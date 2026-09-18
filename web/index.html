@@ -4,10 +4,27 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f4f9ff" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <title>Commute Podcasts</title>
     <link rel="icon" type="image/png" href="/icons/favicon.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <script>
+      // Resolve the theme before the first paint so a dark device preference or
+      // a stored choice never flashes the light palette.
+      (() => {
+        const stored = (() => {
+          try {
+            return localStorage.getItem("rss-pod.theme");
+          } catch {
+            return null;
+          }
+        })();
+        const dark = stored === "dark" || (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = dark ? "#0b1420" : "#f4f9ff";
+      })();
+    </script>
     <link rel="stylesheet" href="/app.css" />
     <script type="module" src="/app.js"></script>
   </head>
@@ -21,6 +38,37 @@
               <a href="/en" data-locale="en" aria-current="page">EN</a>
               <a href="/zh-cn" data-locale="zh-CN">中文</a>
             </nav>
+            <button
+              id="theme-toggle"
+              class="theme-toggle"
+              type="button"
+              aria-label="Color theme: follows device"
+              title="Color theme: follows device"
+              data-mode="system"
+              hidden
+            >
+              <svg class="theme-icon theme-icon-system" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.9"></circle>
+                <path d="M12 4.6a7.4 7.4 0 0 1 0 14.8Z" fill="currentColor"></path>
+              </svg>
+              <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" fill="currentColor"></circle>
+                <path
+                  d="M12 2.4v2.6M12 19v2.6M2.4 12h2.6M19 12h2.6M5.2 5.2l1.9 1.9M16.9 16.9l1.9 1.9M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.9"
+                  stroke-linecap="round"
+                ></path>
+              </svg>
+              <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true">
+                <mask id="theme-toggle-moon-mask">
+                  <rect width="24" height="24" fill="#ffffff"></rect>
+                  <circle cx="17.6" cy="9.4" r="7.4" fill="#000000"></circle>
+                </mask>
+                <circle cx="11.6" cy="12" r="8.2" fill="currentColor" mask="url(#theme-toggle-moon-mask)"></circle>
+              </svg>
+            </button>
             <a
               id="github-link"
               class="github-link"

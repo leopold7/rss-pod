@@ -1,6 +1,10 @@
 const SPEED_KEY = "rss-pod.player-speed";
 const RESUME_KEY = "rss-pod.resume-state";
 const DISMISSED_NOTICE_KEY = "rss-pod.dismissed-notice";
+const THEME_KEY = "rss-pod.theme";
+const THEME_MODES = ["system", "light", "dark"];
+const THEME_COLORS = { light: "#f4f9ff", dark: "#0b1420" };
+const prefersDarkMode = window.matchMedia("(prefers-color-scheme: dark)");
 const DEMO_AUDIO = "/demo.mp3";
 const MEDIA_ARTWORK = [
   { src: "/icons/favicon.png", sizes: "64x64", type: "image/png" },
@@ -19,6 +23,8 @@ const copy = {
     documentTitle: "Commute Podcasts",
     languageLabel: "Language",
     githubLabel: "View project on GitHub",
+    themeLabel: "Color theme",
+    themeModes: { system: "follows device", light: "light", dark: "dark" },
     dateTabsLabel: "Choose a date",
     noticeLabel: "Notice",
     dismissNotice: "Dismiss notice",
@@ -56,6 +62,8 @@ const copy = {
     documentTitle: "通勤播客",
     languageLabel: "语言",
     githubLabel: "在 GitHub 上查看项目",
+    themeLabel: "配色主题",
+    themeModes: { system: "跟随系统", light: "浅色", dark: "深色" },
     dateTabsLabel: "选择日期",
     noticeLabel: "通知",
     dismissNotice: "关闭通知",
@@ -136,6 +144,7 @@ const elements = {
   languageSwitcher: document.querySelector("#language-switcher"),
   languageLinks: [...document.querySelectorAll("[data-locale]")],
   githubLink: document.querySelector("#github-link"),
+  themeToggle: document.querySelector("#theme-toggle"),
   dateTabs: document.querySelector("#date-tabs"),
   noticeRegion: document.querySelector("#notice-region"),
   noticeContent: document.querySelector("#notice-content"),
@@ -164,7 +173,12 @@ const elements = {
   speedButtons: [...document.querySelectorAll("[data-speed]")],
 };
 
+// The theme starts out following the device; the switch cycles through
+// system, light and dark, and a stored value keeps an explicit choice.
+let themePreference = readThemePreference();
+
 applyLocale();
+initTheme();
 
 const dateOptions = createDateOptions();
 const state = {
@@ -189,6 +203,7 @@ bindPlayerEvents();
 bindNoticeEvents();
 renderSpeed();
 loadNotice();
+loadPlayerConfig();
 if (isAdminPage) setupAdmin();
 else loadPlayer();
 
@@ -224,6 +239,23 @@ async function loadNotice() {
     elements.noticeRegion.hidden = false;
   } catch (error) {
     console.error("load notice", error);
+  }
+}
+
+// The static shell ships every optional control; this endpoint decides which of
+// them the deployment keeps visible.
+async function loadPlayerConfig() {
+  if (!elements.themeToggle) return;
+  try {
+    const response = await fetch("/api/v1/player/config", {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    elements.themeToggle.hidden = payload.theme_toggle === false;
+  } catch (error) {
+    console.error("load player config", error);
   }
 }
 
@@ -671,6 +703,43 @@ function applyLocale() {
     const targetPath = link.dataset.locale === "zh-CN" ? "/zh-cn" : "/en";
     link.href = `${isAdminPage ? "/admin" : ""}${targetPath}${window.location.search}${window.location.hash}`;
   }
+}
+
+function readThemePreference() {
+  const stored = readStoredString(THEME_KEY);
+  return THEME_MODES.includes(stored) ? stored : "system";
+}
+
+function resolvedTheme() {
+  if (themePreference !== "system") return themePreference;
+  return prefersDarkMode.matches ? "dark" : "light";
+}
+
+function initTheme() {
+  applyTheme();
+  prefersDarkMode.addEventListener("change", () => {
+    if (themePreference === "system") applyTheme();
+  });
+  if (!elements.themeToggle) return;
+  elements.themeToggle.addEventListener("click", () => {
+    const next = THEME_MODES[(THEME_MODES.indexOf(themePreference) + 1) % THEME_MODES.length];
+    themePreference = next;
+    if (next === "system") removeStorage(THEME_KEY);
+    else writeStorage(THEME_KEY, next);
+    applyTheme();
+  });
+}
+
+function applyTheme() {
+  const theme = resolvedTheme();
+  document.documentElement.dataset.theme = theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = THEME_COLORS[theme];
+  if (!elements.themeToggle) return;
+  elements.themeToggle.dataset.mode = themePreference;
+  const label = `${copy.themeLabel}: ${copy.themeModes[themePreference]}`;
+  elements.themeToggle.setAttribute("aria-label", label);
+  elements.themeToggle.title = label;
 }
 
 function updateGreeting() {

@@ -17,6 +17,8 @@
   --focus: #0f766e;
   --glass-border: rgb(157 200 241 / 58%);
   --blue-icon-filter: invert(55%) sepia(78%) saturate(2636%) hue-rotate(196deg) brightness(100%) contrast(95%);
+  --track: #dce8f2;
+  --thumb-ring: #ffffff;
   --player-height: 186px;
   --section-gap: 8px;
   --content-padding: clamp(20px, 2.2vw, 36px);
@@ -265,13 +267,15 @@ input:focus-visible {
   outline-offset: 3px;
 }
 
-.github-link {
+.github-link,
+.theme-toggle {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   width: 46px;
   height: 46px;
+  padding: 0;
   border: 1px solid rgb(191 213 236 / 66%);
   border-radius: 12px;
   background: rgb(255 255 255 / 72%);
@@ -279,20 +283,37 @@ input:focus-visible {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 82%);
 }
 
-.github-link:hover {
+.theme-toggle {
+  cursor: pointer;
+}
+
+.github-link:hover,
+.theme-toggle:hover {
   border-color: rgb(117 175 237 / 72%);
   background: var(--surface-blue);
   color: var(--blue-hover);
 }
 
-.github-link:focus-visible {
+.github-link:focus-visible,
+.theme-toggle:focus-visible {
   outline: 4px solid var(--focus);
   outline-offset: 3px;
 }
 
-.github-link img {
+.github-link img,
+.theme-toggle svg {
   width: 25px;
   height: 25px;
+}
+
+.theme-toggle .theme-icon {
+  display: none;
+}
+
+.theme-toggle[data-mode="system"] .theme-icon-system,
+.theme-toggle[data-mode="light"] .theme-icon-light,
+.theme-toggle[data-mode="dark"] .theme-icon-dark {
+  display: block;
 }
 
 .date-tabs {
@@ -724,8 +745,8 @@ input:focus-visible {
     to right,
     var(--blue) 0,
     var(--blue) var(--progress-value),
-    #dce8f2 var(--progress-value),
-    #dce8f2 100%
+    var(--track) var(--progress-value),
+    var(--track) 100%
   );
   box-shadow: inset 0 1px 2px rgb(55 106 151 / 12%);
 }
@@ -734,7 +755,7 @@ input:focus-visible {
   width: 18px;
   height: 18px;
   margin-top: -5px;
-  border: 3px solid #ffffff;
+  border: 3px solid var(--thumb-ring);
   border-radius: 50%;
   appearance: none;
   background: linear-gradient(145deg, #67b9ff, var(--blue));
@@ -744,7 +765,7 @@ input:focus-visible {
 .progress::-moz-range-track {
   height: 8px;
   border-radius: 999px;
-  background: #dce8f2;
+  background: var(--track);
   box-shadow: inset 0 1px 2px rgb(55 106 151 / 12%);
 }
 
@@ -757,7 +778,7 @@ input:focus-visible {
 .progress::-moz-range-thumb {
   width: 13px;
   height: 13px;
-  border: 3px solid #ffffff;
+  border: 3px solid var(--thumb-ring);
   border-radius: 50%;
   background: var(--blue);
   box-shadow: 0 2px 8px rgb(79 142 247 / 34%);
@@ -1011,12 +1032,14 @@ input:focus-visible {
     font-size: 12px;
   }
 
-  .github-link {
+  .github-link,
+  .theme-toggle {
     width: 42px;
     height: 42px;
   }
 
-  .github-link img {
+  .github-link img,
+  .theme-toggle svg {
     width: 23px;
     height: 23px;
   }
@@ -1337,4 +1360,210 @@ input:focus-visible {
     padding: 6px 10px;
     font-size: 13px;
   }
+}
+
+/* Dark theme. The device preference and the header switch both resolve to
+   data-theme on the root element, so one variable set plus overrides for the
+   surfaces that are not variable-driven is enough. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0b1420;
+  --surface: rgb(23 35 52 / 82%);
+  --surface-solid: #16202f;
+  --surface-blue: rgb(31 48 70 / 78%);
+  --surface-blue-strong: #22374f;
+  --blue: #6ea8fb;
+  --blue-hover: #8dbdff;
+  --blue-pressed: #b1d3ff;
+  --navy: #e8f0fb;
+  --muted: #94a7c0;
+  --line: #21324a;
+  --line-strong: #30476a;
+  --focus: #5eead4;
+  --glass-border: rgb(96 140 190 / 34%);
+  --blue-icon-filter: brightness(0) invert(1);
+  --track: #2b405c;
+  --thumb-ring: #16202f;
+}
+
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(circle at 86% -10%, rgb(52 116 184 / 26%), transparent 34%),
+    radial-gradient(circle at 4% 96%, rgb(44 84 142 / 22%), transparent 30%),
+    linear-gradient(145deg, #101c2c 0%, var(--page) 56%, #091019 100%);
+}
+
+:root[data-theme="dark"] .notice-content {
+  border-color: rgb(88 133 184 / 42%);
+  background: linear-gradient(105deg, rgb(24 38 57 / 94%), rgb(19 31 48 / 82%));
+  color: #d2e0f2;
+}
+
+:root[data-theme="dark"] .notice-dismiss {
+  border-color: rgb(88 133 184 / 45%);
+  background: rgb(255 255 255 / 8%);
+}
+
+:root[data-theme="dark"] .notice-dismiss:hover {
+  border-color: rgb(110 168 251 / 58%);
+  background: rgb(255 255 255 / 15%);
+}
+
+:root[data-theme="dark"] .notice-content code {
+  background: rgb(255 255 255 / 8%);
+}
+
+:root[data-theme="dark"] .notice-content pre {
+  background: rgb(255 255 255 / 8%);
+}
+
+:root[data-theme="dark"] .notice-content pre code {
+  background: transparent;
+}
+
+:root[data-theme="dark"] .page-header {
+  background: rgb(17 27 43 / 78%);
+  box-shadow: 0 10px 36px rgb(0 0 0 / 26%);
+}
+
+:root[data-theme="dark"] .language-switcher {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(24 38 57 / 74%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .language-switcher a[aria-current="page"] {
+  background: rgb(255 255 255 / 10%);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 24%);
+}
+
+:root[data-theme="dark"] :is(.github-link, .theme-toggle) {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(255 255 255 / 8%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] :is(.github-link, .theme-toggle):hover {
+  border-color: rgb(110 168 251 / 58%);
+  background: rgb(110 168 251 / 16%);
+}
+
+/* The repository mark paints itself with currentColor, which an embedded <img>
+   resolves to black, so dark mode has to lighten it explicitly. */
+:root[data-theme="dark"] .github-link img {
+  filter: brightness(0) invert(1);
+}
+
+:root[data-theme="dark"] .date-tab:hover {
+  background: rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .date-count {
+  border-color: rgb(80 116 160 / 50%);
+  background: rgb(255 255 255 / 7%);
+}
+
+:root[data-theme="dark"] .source-filter-section {
+  background: rgb(17 27 43 / 62%);
+}
+
+:root[data-theme="dark"] .source-filters {
+  border-color: rgb(80 116 160 / 46%);
+  background: rgb(24 38 57 / 76%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+
+:root[data-theme="dark"] .source-filter:hover {
+  background: rgb(255 255 255 / 7%);
+}
+
+:root[data-theme="dark"] .source-filter[aria-pressed="true"] {
+  background: linear-gradient(135deg, rgb(45 73 111 / 94%), rgb(31 53 82 / 88%));
+  box-shadow: inset 0 0 0 1px rgb(110 168 251 / 42%), inset 0 1px 0 rgb(255 255 255 / 8%), 0 5px 14px rgb(0 0 0 / 28%);
+}
+
+:root[data-theme="dark"] .episode-row {
+  background: rgb(21 32 48 / 78%);
+}
+
+:root[data-theme="dark"] .episode-row:hover {
+  background: rgb(30 45 66 / 90%);
+}
+
+:root[data-theme="dark"] .episode-row.is-current {
+  background: linear-gradient(105deg, rgb(38 61 92 / 92%), rgb(27 45 68 / 82%));
+  box-shadow: inset 0 0 0 1px rgb(110 168 251 / 38%), 0 8px 22px rgb(0 0 0 / 34%);
+}
+
+:root[data-theme="dark"] .episode-play-button {
+  border-color: rgb(88 133 184 / 54%);
+  background: rgb(255 255 255 / 8%);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 26%), inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .episode-play-button:hover {
+  border-color: rgb(110 168 251 / 60%);
+  background: var(--surface-blue);
+}
+
+:root[data-theme="dark"] .episode-play-button:active {
+  background: #2b4566;
+}
+
+:root[data-theme="dark"] .player-dock {
+  background: linear-gradient(118deg, rgb(23 35 52 / 88%), rgb(17 28 43 / 80%));
+  box-shadow: 0 18px 44px rgb(0 0 0 / 38%), inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .icon-button-secondary {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(255 255 255 / 7%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .icon-button-secondary:hover:not(:disabled) {
+  border-color: rgb(110 168 251 / 58%);
+  background: var(--surface-blue);
+  box-shadow: 0 6px 16px rgb(0 0 0 / 28%), inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .speed-control {
+  border-color: rgb(80 116 160 / 46%);
+  background: rgb(24 38 57 / 68%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+:root[data-theme="dark"] .speed-control button:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+/* The admin route keeps a palette of its own, so it needs the same overrides. */
+:root[data-theme="dark"] .admin-login {
+  border-color: var(--line-strong);
+  background: rgb(23 35 52 / 88%);
+}
+
+:root[data-theme="dark"] .admin-panel :is(button, input),
+:root[data-theme="dark"] :is(#admin-logout, .admin-visibility) {
+  border-color: var(--line-strong);
+  background: rgb(255 255 255 / 7%);
+  color: var(--navy);
+}
+
+:root[data-theme="dark"] .admin-panel input {
+  background: rgb(255 255 255 / 5%);
+}
+
+:root[data-theme="dark"] .admin-panel :focus-visible,
+:root[data-theme="dark"] :is(#admin-logout, .admin-visibility):focus-visible {
+  outline-color: var(--focus);
+}
+
+:root[data-theme="dark"] .admin-hidden-badge {
+  border-color: var(--line-strong);
+  color: var(--muted);
+}
+
+:root[data-theme="dark"] .episode-row.is-hidden {
+  background: rgb(20 30 44 / 82%);
 }

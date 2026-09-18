@@ -21,9 +21,10 @@ import (
 )
 
 type playerServer struct {
-	pool       *pgxpool.Pool
-	sources    []playerSource
-	noticeFile string
+	pool        *pgxpool.Pool
+	sources     []playerSource
+	noticeFile  string
+	themeToggle bool
 }
 
 const maxNoticeBytes = 64 << 10
@@ -44,14 +45,22 @@ func newPlayerServer(cfg *config.Config, pool *pgxpool.Pool) *playerServer {
 		sources = append(sources, playerSource{ID: source.ID, Name: source.Name})
 	}
 	return &playerServer{
-		pool:       pool,
-		sources:    sources,
-		noticeFile: strings.TrimSpace(cfg.Runtime.HTTP.NoticeFile),
+		pool:        pool,
+		sources:     sources,
+		noticeFile:  strings.TrimSpace(cfg.Runtime.HTTP.NoticeFile),
+		themeToggle: cfg.Runtime.HTTP.ThemeToggleEnabled(),
 	}
 }
 
 func (s *playerServer) listSources(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sources": s.sources})
+}
+
+// config exposes the player preferences that the embedded static shell cannot
+// know, so hiding an optional control in config.yaml does not need a rebuild.
+func (s *playerServer) config(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"theme_toggle": s.themeToggle})
 }
 
 func (s *playerServer) notice(w http.ResponseWriter, r *http.Request) {

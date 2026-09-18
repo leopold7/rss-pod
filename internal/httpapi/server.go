@@ -46,6 +46,7 @@ func newPlayerMux(player *playerServer, admins ...*adminServer) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/player/sources", player.listSources)
 	mux.HandleFunc("GET /api/v1/player/episodes", player.listEpisodes)
 	mux.HandleFunc("GET /api/v1/player/notice", player.notice)
+	mux.HandleFunc("GET /api/v1/player/config", player.config)
 	mux.Handle("GET /", playerWebHandler())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)

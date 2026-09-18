@@ -248,6 +248,44 @@ func TestHTTPManagementAddressDefaultsToLoopback(t *testing.T) {
 	}
 }
 
+func TestHTTPThemeToggleDefaultsToEnabled(t *testing.T) {
+	enabled := true
+	disabled := false
+	for _, test := range []struct {
+		name  string
+		value *bool
+		want  bool
+	}{
+		{name: "unset", value: nil, want: true},
+		{name: "enabled", value: &enabled, want: true},
+		{name: "disabled", value: &disabled, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := (HTTPConfig{ThemeToggle: test.value}).ThemeToggleEnabled(); got != test.want {
+				t.Fatalf("ThemeToggleEnabled() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestLoadReadsDisabledThemeToggle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := strings.Replace(minimalConfig, `http: {listen: ":8080"}`, `http: {listen: ":8080", theme_toggle: false}`, 1)
+	if data == minimalConfig {
+		t.Fatal("minimal config no longer declares runtime.http")
+	}
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Runtime.HTTP.ThemeToggleEnabled() {
+		t.Fatal("theme_toggle: false was ignored")
+	}
+}
+
 func TestValidateLoopbackListen(t *testing.T) {
 	for _, address := range []string{"127.0.0.1:8081", "127.10.20.30:9000", "localhost:8081", "[::1]:8081"} {
 		if err := validateLoopbackListen(address); err != nil {

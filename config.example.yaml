@@ -13,6 +13,9 @@ runtime:
     # Optional Markdown notice shown between the player heading and date tabs; mount the file read-only in containers.
     # 可选的 Markdown 通知，显示在播放器标题与日期标签之间；容器部署时请只读挂载该文件。
     notice_file: ""
+    # Show the theme switch between the language switcher and the repository link; it cycles through following the device, light and dark.
+    # 是否在语言切换与仓库链接之间显示主题切换；按钮在跟随系统／浅色／深色之间循环。
+    theme_toggle: true
 
   database:
     type: postgres
