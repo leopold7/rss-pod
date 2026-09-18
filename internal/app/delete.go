@@ -28,6 +28,9 @@ type DeleteFailedTasksOptions struct {
 	// Ignore remembers the deleted items so later polls skip them instead of
 	// generating the same episode again.
 	Ignore bool
+	// IncludeWaiting also deletes the queued episodes of poll-only sources,
+	// which wait for a listener instead of running the pipeline.
+	IncludeWaiting bool
 }
 
 // DeletedTasks reports what the delete command removed, or would remove.
@@ -75,6 +78,9 @@ func (t deleteTarget) objectKeys() []string {
 // point at, the feed items that carry the original content, the finished River
 // job records, and the failed poll records of those sources.
 //
+// IncludeWaiting widens the selection to the queued episodes of poll-only
+// sources, which wait for a listener and own no job yet.
+//
 // Feed items are removed, so a later poll treats the same RSS entry as new and
 // generates it again unless the item was remembered with Ignore.
 func DeleteFailedTasks(
@@ -90,6 +96,7 @@ func DeleteFailedTasks(
 		return DeletedTasks{}, fmt.Errorf("limit must be between 1 and %d", MaxDeleteEpisodes)
 	}
 	sourceIDs := sourceIDsOf(sources)
+	waitingIDs := waitingSourceIDsOf(sources, opts.IncludeWaiting)
 
 	pool, err := database.Open(ctx, cfg.Runtime.Database)
 	if err != nil {
@@ -98,7 +105,7 @@ func DeleteFailedTasks(
 	defer pool.Close()
 
 	if opts.DryRun {
-		return describeDelete(ctx, pool, sourceIDs, opts)
+		return describeDelete(ctx, pool, sourceIDs, waitingIDs, opts)
 	}
 
 	tx, err := pool.Begin(ctx)
@@ -107,7 +114,7 @@ func DeleteFailedTasks(
 	}
 	defer tx.Rollback(ctx)
 
-	targets, err := loadDeleteTargets(ctx, tx, sourceIDs, opts.Limit)
+	targets, err := loadDeleteTargets(ctx, tx, sourceIDs, waitingIDs, opts.Limit)
 	if err != nil {
 		return DeletedTasks{}, err
 	}
@@ -168,8 +175,8 @@ func DeleteFailedTasks(
 
 // describeDelete counts what a delete run would remove without changing
 // anything.
-func describeDelete(ctx context.Context, pool *pgxpool.Pool, sourceIDs []string, opts DeleteFailedTasksOptions) (DeletedTasks, error) {
-	targets, err := loadDeleteTargets(ctx, pool, sourceIDs, opts.Limit)
+func describeDelete(ctx context.Context, pool *pgxpool.Pool, sourceIDs, waitingIDs []string, opts DeleteFailedTasksOptions) (DeletedTasks, error) {
+	targets, err := loadDeleteTargets(ctx, pool, sourceIDs, waitingIDs, opts.Limit)
 	if err != nil {
 		return DeletedTasks{}, err
 	}
@@ -289,15 +296,19 @@ type queryer interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-func loadDeleteTargets(ctx context.Context, q queryer, sourceIDs []string, limit int) ([]deleteTarget, error) {
+func loadDeleteTargets(ctx context.Context, q queryer, sourceIDs, waitingIDs []string, limit int) ([]deleteTarget, error) {
 	rows, err := q.Query(ctx, `
 		SELECT e.id, e.feed_item_id, f.external_id, e.source_id, e.title, e.audio_object_key
 		FROM episodes AS e
 		JOIN feed_items AS f ON f.id = e.feed_item_id
-		WHERE e.status = 'failed' AND e.source_id = ANY($1)
+		WHERE e.source_id = ANY($1)
+		  AND (
+		        e.status = 'failed'
+		        OR (e.status = 'queued' AND e.source_id = ANY($2::text[]))
+		      )
 		ORDER BY e.created_at DESC, e.id
-		LIMIT $2
-	`, sourceIDs, limit)
+		LIMIT $3
+	`, sourceIDs, waitingIDs, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query failed episodes: %w", err)
 	}
@@ -403,6 +414,23 @@ func validateDeleteSources(sources []config.SourceConfig) error {
 		return fmt.Errorf("at least one source is required")
 	}
 	return nil
+}
+
+// waitingSourceIDsOf lists the selected sources whose queued episodes wait for
+// a listener. Only a poll-only source keeps that state: an automatic source
+// queues its first stage in the same transaction that creates the episode, so a
+// queued episode there is in flight and must keep its job.
+func waitingSourceIDsOf(sources []config.SourceConfig, include bool) []string {
+	if !include {
+		return nil
+	}
+	ids := make([]string, 0, len(sources))
+	for _, source := range sources {
+		if source.PollOnly {
+			ids = append(ids, source.ID)
+		}
+	}
+	return ids
 }
 
 func sourceIDsOf(sources []config.SourceConfig) []string {

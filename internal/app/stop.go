@@ -65,7 +65,7 @@ func StopRunningTasks(ctx context.Context, cfg *config.Config) (StopResult, erro
 		cancelled++
 	}
 
-	episodes, runs, err := failInFlightWork(ctx, pool)
+	episodes, runs, err := failInFlightWork(ctx, pool, cfg.PollOnlySourceIDs())
 	if err != nil {
 		return StopResult{}, err
 	}
@@ -94,8 +94,11 @@ func inFlightJobIDs(ctx context.Context, client *river.Client[pgx.Tx]) ([]int64,
 }
 
 // failInFlightWork marks every episode and source run that is still in flight as
-// failed. Published and already failed rows are left untouched.
-func failInFlightWork(ctx context.Context, pool *pgxpool.Pool) (episodes, runs int, err error) {
+// failed. Published and already failed rows are left untouched, and so are the
+// episodes poll-only sources left waiting for a listener: a queued episode of
+// such a source has no job behind it, so stopping work must not turn it into a
+// failure the listener never caused.
+func failInFlightWork(ctx context.Context, pool *pgxpool.Pool, pollOnlySourceIDs []string) (episodes, runs int, err error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return 0, 0, fmt.Errorf("begin stop transaction: %w", err)
@@ -106,7 +109,8 @@ func failInFlightWork(ctx context.Context, pool *pgxpool.Pool) (episodes, runs i
 		UPDATE episodes
 		SET status = 'failed', error = $1, updated_at = now()
 		WHERE status NOT IN ('published', 'failed')
-	`, stoppedWorkError)
+		  AND NOT (status = 'queued' AND source_id = ANY(COALESCE($2::text[], '{}')))
+	`, stoppedWorkError, pollOnlySourceIDs)
 	if err != nil {
 		return 0, 0, fmt.Errorf("fail in-flight episodes: %w", err)
 	}

@@ -215,6 +215,23 @@ runtime:
     theme_toggle: false
 ```
 
+### Poll-only sources
+
+A source can be left to discovery only. Polling then stores new entries without
+generating anything, the player lists their titles with a download control, and
+generation starts per episode when a listener selects it. The row shows the
+current stage while it runs, and the state survives a page reload:
+
+```yaml
+sources:
+  - id: zhihu-daily
+    poll_only: true
+```
+
+The default keeps the automatic pipeline. Because the player only shows the last
+three days, waiting entries older than that are started with
+`rss-pod start --sources all`.
+
 The main commands are:
 
 | Command | Purpose |
@@ -222,9 +239,10 @@ The main commands are:
 | `check` | Validate configuration and external services |
 | `migrate` | Apply application and River database migrations |
 | `poll` | Explicitly enqueue one or more source polls |
+| `start` | Start episodes a poll-only source left waiting |
 | `retry` | Re-queue failed episodes at the stage that failed |
 | `stop` | Cancel every in-flight job and stop its work |
-| `delete` | Purge failed episodes, their content, and poll records |
+| `delete` | Purge failed episodes, their content, and poll records (`--include-waiting` also purges poll-only episodes waiting for a start) |
 | `serve` | Run only the HTTP player and management listeners |
 | `worker` | Run selected River queues |
 | `run` | Run the HTTP service, scheduler, and every queue |
@@ -324,12 +342,16 @@ prompt limit, with a warning log that excludes content and URLs.
 
 ## Security model
 
-The public listener serves the player and read-only `/api/v1/player/*` routes
-by default. Configuring the admin environment variables additionally enables
-TOTP-protected `/admin` and `/api/v1/admin/*` routes for hiding and restoring
-episodes. Health checks, polling, retries, database-backed queries, and podcast
-management routes are bound to a loopback-only listener. Do not publish the
-management port from a container or reverse proxy it to the internet.
+The public listener serves the player and its `/api/v1/player/*` routes. Those
+routes only read data, except for `POST /api/v1/player/episodes/{id}/start`,
+which starts generation for an episode a poll-only source left waiting. That
+route is deliberately unauthenticated, so anyone who can reach the player can
+spend content and TTS calls: keep poll-only deployments on a trusted network.
+Configuring the admin environment variables additionally enables TOTP-protected
+`/admin` and `/api/v1/admin/*` routes for hiding and restoring episodes. Health
+checks, polling, retries, database-backed queries, and podcast management routes
+are bound to a loopback-only listener. Do not publish the management port from a
+container or reverse proxy it to the internet.
 
 ## License
 

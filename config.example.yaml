@@ -259,6 +259,12 @@ sources:
   - id: zhihu-daily
     name: 知乎日报
     enabled: false
+    # Poll-only keeps this source discover-only: polling only stores new entries,
+    # the player lists their titles with a download button, and generation starts
+    # per episode when a listener taps it. Unset or false keeps the automatic pipeline.
+    # poll_only 让该来源只负责发现内容：轮询只入库条目，播放器仅显示标题和下载按钮，
+    # 由听众逐条点击后才开始生成；不填写或设为 false 时保持自动流水线。
+    # poll_only: true
     feed:
       # Replace with your own RSS or RSSHub endpoint.
       # 请替换为自己的 RSS 或 RSSHub 地址。

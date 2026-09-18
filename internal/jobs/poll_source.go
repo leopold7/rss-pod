@@ -177,8 +177,12 @@ func (w *PollSourceWorker) poll(ctx context.Context, args PollSourceArgs) error 
 					return fmt.Errorf("store episode speaker: %w", err)
 				}
 			}
-			if _, err := w.River.InsertTx(ctx, tx, ResolveContentArgs{EpisodeID: insertedEpisodeID}, nil); err != nil {
-				return fmt.Errorf("enqueue content resolution: %w", err)
+			// A poll-only source only discovers content. Its episodes stay queued
+			// until a listener starts generation from the player or the CLI.
+			if !source.PollOnly {
+				if _, err := w.River.InsertTx(ctx, tx, ResolveContentArgs{EpisodeID: insertedEpisodeID}, nil); err != nil {
+					return fmt.Errorf("enqueue content resolution: %w", err)
+				}
 			}
 		}
 	}

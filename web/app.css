@@ -560,6 +560,56 @@ input:focus-visible {
   filter: brightness(0) invert(1);
 }
 
+/* An episode that a poll-only source left waiting shows the download icon in
+   the same control; while its download runs the icon pulses inside a spinning
+   ring, and a failed download tints the control instead of hiding it. */
+.episode-play-button[data-state="processing"] {
+  position: relative;
+  border-color: rgb(117 175 237 / 72%);
+  background: var(--surface-blue);
+}
+
+.episode-play-button[data-state="processing"]::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 2px solid transparent;
+  border-top-color: var(--blue);
+  border-right-color: var(--blue);
+  border-radius: 50%;
+  opacity: 0.9;
+  animation: download-spin 900ms linear infinite;
+}
+
+.episode-play-button[data-state="processing"] img {
+  animation: download-pulse 1.6s ease-in-out infinite;
+}
+
+.episode-play-button[data-state="failed"] {
+  border-color: rgb(194 65 12 / 42%);
+  background: rgb(255 247 237 / 86%);
+}
+
+.episode-row.is-generating {
+  background: linear-gradient(105deg, rgb(240 249 255 / 90%), rgb(232 246 255 / 72%));
+}
+
+.episode-row.is-generation-failed {
+  background: rgb(255 250 245 / 82%);
+}
+
+@keyframes download-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes download-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
 .episode-source {
   overflow: hidden;
   color: var(--blue);
@@ -1280,6 +1330,17 @@ input:focus-visible {
     scroll-behavior: auto !important;
     transition: none !important;
   }
+
+  .toast {
+    animation: none !important;
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  .episode-play-button[data-state="processing"]::after,
+  .episode-play-button[data-state="processing"] img {
+    animation: none !important;
+  }
 }
 
 /* The admin route reuses player cards and keeps visibility controls distinct. */
@@ -1359,6 +1420,46 @@ input:focus-visible {
     min-height: 36px;
     padding: 6px 10px;
     font-size: 13px;
+  }
+}
+
+/* The download status toast floats just above the player dock while an episode
+   is still being generated. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--player-height) + 16px);
+  z-index: 3;
+  max-width: min(88vw, 560px);
+  margin: 0;
+  padding: 10px 20px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--navy);
+  box-shadow: 0 14px 34px rgb(59 130 246 / 18%);
+  backdrop-filter: blur(16px) saturate(135%);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 10px);
+  animation: toast-in 220ms ease-out forwards, toast-out 300ms ease-in 3.3s forwards;
+}
+
+@keyframes toast-in {
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, 8px);
   }
 }
 
@@ -1566,4 +1667,28 @@ input:focus-visible {
 
 :root[data-theme="dark"] .episode-row.is-hidden {
   background: rgb(20 30 44 / 82%);
+}
+
+:root[data-theme="dark"] .toast {
+  border-color: rgb(96 140 190 / 42%);
+  background: rgb(24 38 57 / 94%);
+  box-shadow: 0 14px 34px rgb(0 0 0 / 38%);
+}
+
+:root[data-theme="dark"] .episode-play-button[data-state="processing"] {
+  border-color: rgb(110 168 251 / 60%);
+  background: var(--surface-blue);
+}
+
+:root[data-theme="dark"] .episode-play-button[data-state="failed"] {
+  border-color: rgb(251 146 60 / 46%);
+  background: rgb(120 53 15 / 26%);
+}
+
+:root[data-theme="dark"] .episode-row.is-generating {
+  background: linear-gradient(105deg, rgb(28 45 68 / 90%), rgb(22 36 55 / 82%));
+}
+
+:root[data-theme="dark"] .episode-row.is-generation-failed {
+  background: rgb(38 30 26 / 84%);
 }

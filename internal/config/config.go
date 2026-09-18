@@ -403,9 +403,15 @@ type PodcastConfig struct {
 }
 
 type SourceConfig struct {
-	ID         string            `yaml:"id" json:"id"`
-	Name       string            `yaml:"name" json:"name"`
-	Enabled    bool              `yaml:"enabled" json:"enabled"`
+	ID      string `yaml:"id" json:"id"`
+	Name    string `yaml:"name" json:"name"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	// PollOnly keeps the source discover-only: a poll stores new feed items and
+	// creates episodes that wait in the player until a listener starts
+	// generation. The default keeps the fully automatic pipeline.
+	// PollOnly 让来源只负责发现内容：轮询只入库并创建条目，等待听众在播放器里
+	// 手动开始生成；默认关闭时保持全自动流水线。
+	PollOnly   bool              `yaml:"poll_only" json:"poll_only"`
 	Feed       FeedConfig        `yaml:"feed" json:"feed"`
 	Schedule   ScheduleConfig    `yaml:"schedule" json:"schedule"`
 	Content    *ContentConfig    `yaml:"content" json:"content,omitempty"`
@@ -958,6 +964,19 @@ func (c *Config) Source(id string) (SourceConfig, bool) {
 		}
 	}
 	return SourceConfig{}, false
+}
+
+// PollOnlySourceIDs lists the enabled sources whose episodes wait for a
+// listener to start generation. It follows the playable source list, so a
+// disabled source never exposes its unfinished episodes.
+func (c *Config) PollOnlySourceIDs() []string {
+	ids := make([]string, 0, len(c.Sources))
+	for _, source := range c.Sources {
+		if source.Enabled && source.PollOnly {
+			ids = append(ids, source.ID)
+		}
+	}
+	return ids
 }
 
 func (c *Config) EffectiveContent(source SourceConfig) ContentConfig {

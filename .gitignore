@@ -7,3 +7,4 @@ notice.md
 .codebuddy/
 .vscode/
 push.bat
+cmd/rss-pod/__debug_bin.exe

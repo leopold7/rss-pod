@@ -33,6 +33,20 @@ func TestDeleteFailedTasksValidatesBeforeConnecting(t *testing.T) {
 	}
 }
 
+func TestWaitingSourceIDsOfOnlyIncludesPollOnlySourcesWhenRequested(t *testing.T) {
+	sources := []config.SourceConfig{
+		{ID: "manual", PollOnly: true},
+		{ID: "automatic", Enabled: true},
+	}
+	if got := waitingSourceIDsOf(sources, false); got != nil {
+		t.Fatalf("waitingSourceIDsOf(include=false) = %v, want nil", got)
+	}
+	got := waitingSourceIDsOf(sources, true)
+	if len(got) != 1 || got[0] != "manual" {
+		t.Fatalf("waitingSourceIDsOf(include=true) = %v, want only manual", got)
+	}
+}
+
 func TestIgnoredFeedItemsValidateBeforeConnecting(t *testing.T) {
 	cfg := &config.Config{}
 	sources := []config.SourceConfig{{ID: "alpha", Enabled: true}}

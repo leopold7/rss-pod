@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/riverqueue/river"
+
 	"github.com/synrise25/rss-pod/internal/config"
 )
 
@@ -70,6 +72,43 @@ func TestEpisodeAttemptStatus(t *testing.T) {
 func TestGenerateTTSUsesFiveRiverAttempts(t *testing.T) {
 	if got := (GenerateTTSArgs{}).InsertOpts().MaxAttempts; got != 5 {
 		t.Fatalf("GenerateTTS River max attempts = %d, want 5", got)
+	}
+}
+
+func TestStageStatusMatchesWorkerStatuses(t *testing.T) {
+	for _, test := range []struct {
+		jobKind string
+		want    string
+	}{
+		{jobKind: (ResolveContentArgs{}).Kind(), want: "resolving_content"},
+		{jobKind: (GenerateScriptArgs{}).Kind(), want: "generating_script"},
+		{jobKind: (GenerateTTSArgs{}).Kind(), want: "generating_tts"},
+	} {
+		if got := stageStatus(test.jobKind); got != test.want {
+			t.Errorf("stageStatus(%q) = %q, want %q", test.jobKind, got, test.want)
+		}
+	}
+}
+
+// pipelineJobArgs is the pair of interfaces every pipeline job implements.
+type pipelineJobArgs interface {
+	river.JobArgs
+	river.JobArgsWithInsertOpts
+}
+
+func TestPipelineJobsLeaveRiverUniquenessDisabled(t *testing.T) {
+	// episodes.status is the source of truth for whether a stage already runs.
+	// River uniqueness has to stay off: a completed job within its retention
+	// window would silently swallow the next insertion, which is exactly what a
+	// resumed or manually started episode needs.
+	args := []pipelineJobArgs{
+		ResolveContentArgs{}, GenerateScriptArgs{}, GenerateTTSArgs{}, ComposeEpisodeArgs{},
+	}
+	for _, value := range args {
+		unique := value.InsertOpts().UniqueOpts
+		if unique.ByArgs || unique.ByQueue || unique.ByPeriod != 0 || unique.ByState != nil {
+			t.Errorf("%s enables River uniqueness: %#v", value.Kind(), unique)
+		}
 	}
 }
 

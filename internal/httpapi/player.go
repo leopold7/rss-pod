@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,18 +14,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 
 	"github.com/synrise25/rss-pod/internal/config"
+	"github.com/synrise25/rss-pod/internal/jobs"
 )
 
 type playerServer struct {
-	pool        *pgxpool.Pool
-	sources     []playerSource
-	noticeFile  string
-	themeToggle bool
+	pool  *pgxpool.Pool
+	river *river.Client[pgx.Tx]
+	cfg   *config.Config
+	// pollOnlySources lists the enabled sources whose episodes wait for a
+	// listener to start them, so they are listed before they are generated.
+	pollOnlySources []string
+	sources         []playerSource
+	noticeFile      string
+	themeToggle     bool
 }
 
 const maxNoticeBytes = 64 << 10
@@ -36,7 +45,7 @@ type playerSource struct {
 	Name string `json:"name"`
 }
 
-func newPlayerServer(cfg *config.Config, pool *pgxpool.Pool) *playerServer {
+func newPlayerServer(cfg *config.Config, pool *pgxpool.Pool, riverClient *river.Client[pgx.Tx]) *playerServer {
 	sources := make([]playerSource, 0, len(cfg.Sources))
 	for _, source := range cfg.Sources {
 		if !source.Enabled {
@@ -45,10 +54,13 @@ func newPlayerServer(cfg *config.Config, pool *pgxpool.Pool) *playerServer {
 		sources = append(sources, playerSource{ID: source.ID, Name: source.Name})
 	}
 	return &playerServer{
-		pool:        pool,
-		sources:     sources,
-		noticeFile:  strings.TrimSpace(cfg.Runtime.HTTP.NoticeFile),
-		themeToggle: cfg.Runtime.HTTP.ThemeToggleEnabled(),
+		pool:            pool,
+		river:           riverClient,
+		cfg:             cfg,
+		pollOnlySources: cfg.PollOnlySourceIDs(),
+		sources:         sources,
+		noticeFile:      strings.TrimSpace(cfg.Runtime.HTTP.NoticeFile),
+		themeToggle:     cfg.Runtime.HTTP.ThemeToggleEnabled(),
 	}
 }
 
@@ -142,6 +154,40 @@ type playerEpisode struct {
 	AudioDurationSeconds int64      `json:"audio_duration_seconds,omitempty"`
 	PublishedAt          *time.Time `json:"published_at,omitempty"`
 	OriginalPublishedAt  *time.Time `json:"original_published_at,omitempty"`
+	// State tells the player which control to render: ready plays, pending can
+	// be started by hand, processing is already running, and failed can be tried
+	// again. Stage is set while state is processing.
+	State string `json:"state"`
+	Stage string `json:"stage,omitempty"`
+}
+
+// playerEpisodeState maps the internal pipeline status to the small, machine
+// readable state the player renders. The stage names the running step so the
+// player can show its own localised wording.
+func playerEpisodeState(status string, hasAudio bool) (state, stage string) {
+	switch status {
+	case "published":
+		if hasAudio {
+			return "ready", ""
+		}
+		// A published episode always carries audio; treat anything else as
+		// broken rather than pretending it can be played.
+		return "failed", ""
+	case "queued":
+		return "pending", ""
+	case "resolving_content":
+		return "processing", "content"
+	case "content_ready", "generating_script":
+		return "processing", "script"
+	case "script_ready", "generating_tts":
+		return "processing", "tts"
+	case "composing":
+		return "processing", "compose"
+	case "retrying":
+		return "processing", ""
+	default:
+		return "failed", ""
+	}
 }
 
 func (s *playerServer) listEpisodes(w http.ResponseWriter, r *http.Request) {
@@ -173,19 +219,25 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 	}
 
 	sourceID := r.URL.Query().Get("source_id")
+	// Episodes of a poll-only source are listed before they are generated, and
+	// an episode waiting for a listener has no published_at yet, so both the
+	// window and the order fall back to the feed item's own timestamp.
 	rows, err := s.pool.Query(r.Context(), `
 		SELECT e.id, e.source_id, e.title, e.audio_url, e.audio_byte_size, e.audio_duration_seconds,
-		       e.published_at, f.published_at, e.hidden_at IS NOT NULL
+		       COALESCE(e.published_at, f.published_at), f.published_at, e.hidden_at IS NOT NULL, e.status
 		FROM episodes e
 		JOIN feed_items f ON f.id = e.feed_item_id
-		WHERE e.status = 'published' AND e.audio_url <> ''
+		WHERE (
+		         (e.status = 'published' AND e.audio_url <> '')
+		         OR e.source_id = ANY($6::text[])
+		      )
 		  AND ($5 OR e.hidden_at IS NULL)
 		  AND ($1 = '' OR e.source_id = $1)
-		  AND ($2::timestamptz IS NULL OR e.published_at >= $2)
-		  AND ($3::timestamptz IS NULL OR e.published_at < $3)
-		ORDER BY e.published_at DESC NULLS LAST
+		  AND ($2::timestamptz IS NULL OR COALESCE(e.published_at, f.published_at) >= $2)
+		  AND ($3::timestamptz IS NULL OR COALESCE(e.published_at, f.published_at) < $3)
+		ORDER BY COALESCE(e.published_at, f.published_at) DESC NULLS LAST
 		LIMIT $4
-	`, sourceID, since, before, limit, includeHidden)
+	`, sourceID, since, before, limit, includeHidden, s.pollOnlySources)
 	if err != nil {
 		slog.Error("query player episodes", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load episodes")
@@ -196,6 +248,7 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 	episodes := make([]playerEpisode, 0)
 	for rows.Next() {
 		var episode playerEpisode
+		var status string
 		if err := rows.Scan(
 			&episode.ID,
 			&episode.SourceID,
@@ -206,11 +259,13 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 			&episode.PublishedAt,
 			&episode.OriginalPublishedAt,
 			&episode.Hidden,
+			&status,
 		); err != nil {
 			slog.Error("scan player episode", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to load episodes")
 			return
 		}
+		episode.State, episode.Stage = playerEpisodeState(status, episode.AudioURL != "")
 		episodes = append(episodes, episode)
 	}
 	if err := rows.Err(); err != nil {
@@ -220,6 +275,57 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"episodes": episodes})
+}
+
+// startEpisode begins generation for an episode a poll-only source left waiting
+// for a listener. It is public on purpose: the player page is where the
+// listener decides which entry is worth generating.
+func (s *playerServer) startEpisode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	episodeID, err := uuid.Parse(r.PathValue("episodeID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid episode ID")
+		return
+	}
+
+	tx, err := s.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("begin episode start", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start generation")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	started, err := jobs.StartEpisodeLocked(r.Context(), tx, s.river, s.cfg, episodeID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		writeError(w, http.StatusNotFound, "episode not found")
+		return
+	case errors.Is(err, jobs.ErrEpisodeNotStartable):
+		writeError(w, http.StatusConflict, "episode does not wait for a manual start")
+		return
+	case errors.Is(err, jobs.ErrEpisodeGenerating):
+		writeError(w, http.StatusConflict, "generation is already in progress")
+		return
+	case err != nil:
+		slog.Error("start episode generation", "error", err, "episode", episodeID)
+		writeError(w, http.StatusInternalServerError, "failed to start generation")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("commit episode start", "error", err, "episode", episodeID)
+		writeError(w, http.StatusInternalServerError, "failed to start generation")
+		return
+	}
+
+	state, stage := playerEpisodeState(started.Status, false)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"episode_id": started.EpisodeID,
+		"job_id":     started.JobID,
+		"job_kind":   started.JobKind,
+		"state":      state,
+		"stage":      stage,
+	})
 }
 
 func parseOptionalRFC3339(w http.ResponseWriter, value, field string) (*time.Time, bool) {

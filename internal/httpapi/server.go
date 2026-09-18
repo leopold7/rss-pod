@@ -30,7 +30,7 @@ type Server struct {
 
 func New(cfg *config.Config, pool *pgxpool.Pool, riverClient *river.Client[pgx.Tx]) *Server {
 	s := &Server{config: cfg, pool: pool, river: riverClient}
-	player := newPlayerServer(cfg, pool)
+	player := newPlayerServer(cfg, pool, riverClient)
 	s.playerHTTP = newHTTPServer(cfg.Runtime.HTTP.Listen, newPlayerMux(player, newAdminServer(cfg.Admin, pool, player)))
 	s.managementHTTP = newHTTPServer(cfg.Runtime.HTTP.ManagementAddress(), newManagementMux(s))
 	return s
@@ -45,6 +45,7 @@ func newPlayerMux(player *playerServer, admins ...*adminServer) *http.ServeMux {
 	}
 	mux.HandleFunc("GET /api/v1/player/sources", player.listSources)
 	mux.HandleFunc("GET /api/v1/player/episodes", player.listEpisodes)
+	mux.HandleFunc("POST /api/v1/player/episodes/{episodeID}/start", player.startEpisode)
 	mux.HandleFunc("GET /api/v1/player/notice", player.notice)
 	mux.HandleFunc("GET /api/v1/player/config", player.config)
 	mux.Handle("GET /", playerWebHandler())

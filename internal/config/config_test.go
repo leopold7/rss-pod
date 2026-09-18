@@ -80,6 +80,64 @@ func TestLoadCurrentConfig(t *testing.T) {
 	if got := cfg.EffectivePodcast(v2ex).MaxAge; got != "72h" {
 		t.Fatalf("effective podcast max age = %q", got)
 	}
+	// The publishable example must keep the automatic pipeline by default.
+	if ids := cfg.PollOnlySourceIDs(); len(ids) != 0 {
+		t.Fatalf("poll-only sources = %v, want none", ids)
+	}
+}
+
+func TestLoadSourcePollOnly(t *testing.T) {
+	tests := []struct {
+		name    string
+		new     string
+		want    bool
+		wantIDs []string
+	}{
+		{name: "defaults to disabled", new: "enabled: true", want: false},
+		{name: "reads explicit true", new: "enabled: true\n    poll_only: true", want: true, wantIDs: []string{"test"}},
+		{name: "reads explicit false", new: "enabled: true\n    poll_only: false", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := strings.Replace(minimalConfig, "enabled: true", test.new, 1)
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			source, ok := cfg.Source("test")
+			if !ok {
+				t.Fatal("source test not found")
+			}
+			if source.PollOnly != test.want {
+				t.Fatalf("source.PollOnly = %v, want %v", source.PollOnly, test.want)
+			}
+			ids := cfg.PollOnlySourceIDs()
+			if len(ids) != len(test.wantIDs) {
+				t.Fatalf("PollOnlySourceIDs() = %v, want %v", ids, test.wantIDs)
+			}
+			for index, want := range test.wantIDs {
+				if ids[index] != want {
+					t.Fatalf("PollOnlySourceIDs() = %v, want %v", ids, test.wantIDs)
+				}
+			}
+		})
+	}
+}
+
+func TestPollOnlySourceIDsSkipsDisabledSources(t *testing.T) {
+	cfg := &Config{Sources: []SourceConfig{
+		{ID: "discover-only", Enabled: true, PollOnly: true},
+		{ID: "paused", Enabled: false, PollOnly: true},
+		{ID: "automatic", Enabled: true},
+	}}
+	ids := cfg.PollOnlySourceIDs()
+	if len(ids) != 1 || ids[0] != "discover-only" {
+		t.Fatalf("PollOnlySourceIDs() = %v, want [discover-only]", ids)
+	}
 }
 
 func TestLoadDoesNotInterpolateEnvironmentIntoYAML(t *testing.T) {

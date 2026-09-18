@@ -56,6 +56,19 @@ const copy = {
     playEpisode: (title) => `Play: ${title}`,
     pauseEpisode: (title) => `Pause: ${title}`,
     durationLabel: (duration) => `Duration ${duration}`,
+    downloadEpisode: (title) => `Download: ${title}`,
+    downloadingEpisode: (title) => `Downloading: ${title}`,
+    retryEpisodeDownload: (title) => `Download failed, retry: ${title}`,
+    generatingStages: {
+      content: "reading the page",
+      script: "writing the script",
+      tts: "converting to speech",
+      compose: "composing and uploading",
+      fallback: "working",
+    },
+    generatingReady: "Download finished. Ready to play.",
+    generatingUnavailable: "The download could not be started. Please try again later.",
+    generatingAlreadyRunning: "This episode is already downloading.",
   },
   "zh-CN": {
     lang: "zh-CN",
@@ -95,6 +108,19 @@ const copy = {
     playEpisode: (title) => `播放：${title}`,
     pauseEpisode: (title) => `暂停：${title}`,
     durationLabel: (duration) => `播放时长 ${duration}`,
+    downloadEpisode: (title) => `下载：${title}`,
+    downloadingEpisode: (title) => `正在下载：${title}`,
+    retryEpisodeDownload: (title) => `下载失败，重新下载：${title}`,
+    generatingStages: {
+      content: "正在读取页面",
+      script: "正在生成脚本",
+      tts: "正在转为语音",
+      compose: "正在合成并上传",
+      fallback: "正在处理",
+    },
+    generatingReady: "下载完成，可以播放了",
+    generatingUnavailable: "无法开始下载，请稍后重试",
+    generatingAlreadyRunning: "该条目正在下载中",
   },
 }[localeKey];
 
@@ -171,6 +197,7 @@ const elements = {
   speedLabel: document.querySelector("#speed-label"),
   speedLegend: document.querySelector("#speed-legend"),
   speedButtons: [...document.querySelectorAll("[data-speed]")],
+  toast: document.querySelector("#toast"),
 };
 
 // The theme starts out following the device; the switch cycles through
@@ -191,12 +218,21 @@ const state = {
   speed: isDemoMode() ? 1 : readStoredNumber(SPEED_KEY, 1),
   pendingResume: isDemoMode() ? null : readResumeState(),
   restoringResume: false,
+  // Downloads this page asked for and whose response has not arrived yet.
+  startingEpisodes: new Set(),
 };
 
 updateGreeting();
 window.setInterval(updateGreeting, 60_000);
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) updateGreeting();
+  if (document.hidden) {
+    window.clearTimeout(refreshTimer);
+    refreshTimer = 0;
+    return;
+  }
+  updateGreeting();
+  // Coming back to the page is a good moment to catch up with a download.
+  if (state.episodes.some((episode) => episode.state === "processing")) refreshEpisodes();
 });
 
 bindPlayerEvents();
@@ -281,18 +317,57 @@ async function loadPlayer() {
   try {
     const payload = isDemoMode() ? demoPayload() : await fetchPlayerData();
     if (payload === null) return;
-    state.sources = payload.sources;
-    state.episodes = payload.episodes
-      .map(normalizeEpisode)
-      .filter((episode) => episode.id && episode.audioURL)
-      .sort((a, b) => b.sortTime - a.sortTime);
-
+    applyPayload(payload);
     selectInitialEpisode();
+    scheduleRefresh();
   } catch (error) {
     console.error("load player", error);
     setStatus(copy.loadError);
     renderDateTabs();
     renderSourceFilters();
+  }
+}
+
+// applyPayload stores the list the player renders. An episode that waits for a
+// listener has no audio yet; it keeps its row so its download control shows.
+function applyPayload(payload) {
+  state.sources = payload.sources;
+  state.episodes = payload.episodes
+    .map(normalizeEpisode)
+    .filter((episode) => episode.id && (episode.audioURL !== "" || episode.state !== "ready"))
+    .sort((a, b) => b.sortTime - a.sortTime);
+}
+
+const REFRESH_INTERVAL = 5_000;
+let refreshTimer = 0;
+
+// A running download is the only reason to poll: the episode list already
+// reports the state and the stage of every episode, which also brings a page
+// that was reloaded mid-download back up to date.
+function scheduleRefresh() {
+  window.clearTimeout(refreshTimer);
+  refreshTimer = 0;
+  if (isDemoMode() || document.hidden) return;
+  if (isAdminPage && !adminCSRF) return;
+  if (!state.episodes.some((episode) => episode.state === "processing")) return;
+  refreshTimer = window.setTimeout(refreshEpisodes, REFRESH_INTERVAL);
+}
+
+// refreshEpisodes replaces the data and redraws the rows, but it never touches
+// the audio element or the selected episode, so a download never interrupts
+// what is playing.
+async function refreshEpisodes() {
+  window.clearTimeout(refreshTimer);
+  refreshTimer = 0;
+  try {
+    const payload = await fetchPlayerData();
+    if (payload === null) return;
+    applyPayload(payload);
+    renderAll();
+  } catch (error) {
+    console.error("refresh player", error);
+  } finally {
+    scheduleRefresh();
   }
 }
 
@@ -400,26 +475,26 @@ function renderEpisodeList() {
     const playButton = row.querySelector(".episode-play-button");
     const playIcon = row.querySelector(".episode-play-button img");
     const isPlaying = episode.id === state.currentEpisodeID && !elements.audio.paused;
-    playButton.setAttribute(
-      "aria-label",
-      isPlaying ? copy.pauseEpisode(episode.title) : copy.playEpisode(episode.title),
-    );
-    playIcon.src = isPlaying ? "/icons/pause.svg" : "/icons/play.svg";
-    playButton.addEventListener("click", () => toggleEpisode(episode));
+    const controlLabel = episodeControlLabel(episode, isPlaying);
+    row.classList.toggle("is-generating", episode.state === "processing");
+    row.classList.toggle("is-generation-failed", episode.state === "failed");
+    playButton.dataset.state = episode.state;
+    playButton.setAttribute("aria-label", controlLabel);
+    playButton.title = controlLabel;
+    playIcon.src =
+      episode.state === "ready" && isPlaying ? "/icons/pause.svg" : episodeControlIcon(episode);
+    playButton.addEventListener("click", () => activateEpisode(episode));
 
     row.tabIndex = 0;
-    row.setAttribute(
-      "aria-label",
-      isPlaying ? copy.pauseEpisode(episode.title) : copy.playEpisode(episode.title),
-    );
+    row.setAttribute("aria-label", controlLabel);
     row.addEventListener("click", (event) => {
       if (event.target.closest("button, a, input")) return;
-      toggleEpisode(episode);
+      activateEpisode(episode);
     });
     row.addEventListener("keydown", (event) => {
       if (event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
       event.preventDefault();
-      toggleEpisode(episode);
+      activateEpisode(episode);
     });
 
     row.querySelector(".episode-source").textContent = sourceName(episode.sourceID);
@@ -429,7 +504,8 @@ function renderEpisodeList() {
 
     const time = row.querySelector(".episode-time");
     renderEpisodeDuration(time, episode.durationSeconds);
-    if (isAdminPage && adminCSRF) {
+    // Visibility only applies to published episodes, which are the playable ones.
+    if (isAdminPage && adminCSRF && isPlayable(episode)) {
       row.classList.add("admin-episode-row");
       const visibilityButton = document.createElement("button");
       visibilityButton.type = "button";
@@ -454,6 +530,20 @@ function renderEpisodeList() {
   updateQueueButtons();
 }
 
+// The row control plays a ready episode, starts a download for one that is
+// waiting, and reports progress for one that is already running.
+function activateEpisode(episode) {
+  if (isPlayable(episode)) {
+    toggleEpisode(episode);
+    return;
+  }
+  if (episode.state === "processing") {
+    showToast(stageToast(episode));
+    return;
+  }
+  startEpisodeDownload(episode);
+}
+
 async function toggleEpisode(episode) {
   if (state.currentEpisodeID === episode.id) {
     if (elements.audio.paused) {
@@ -464,6 +554,118 @@ async function toggleEpisode(episode) {
     return;
   }
   selectEpisode(episode, { autoplay: true });
+}
+
+async function startEpisodeDownload(episode) {
+  if (isDemoMode()) {
+    simulateDemoDownload(episode);
+    return;
+  }
+  if (state.startingEpisodes.has(episode.id)) return;
+  state.startingEpisodes.add(episode.id);
+  renderEpisodeList();
+  try {
+    const response = await fetch(
+      `/api/v1/player/episodes/${encodeURIComponent(episode.id)}/start`,
+      { method: "POST", headers: { Accept: "application/json" } },
+    );
+    if (response.status === 409) {
+      // Another listener started it, or the page was stale about its state.
+      showToast(copy.generatingAlreadyRunning);
+      await refreshEpisodes();
+      return;
+    }
+    if (!response.ok) throw new Error(`start API returned ${response.status}`);
+    applyStartedEpisode(episode, await response.json());
+  } catch (error) {
+    console.error("start episode download", error);
+    showToast(copy.generatingUnavailable);
+  } finally {
+    state.startingEpisodes.delete(episode.id);
+    renderEpisodeList();
+  }
+}
+
+function applyStartedEpisode(episode, payload) {
+  if (payload.state === "processing") {
+    episode.state = "processing";
+    episode.stage = String(payload.stage || "");
+  }
+  showToast(stageToast(episode));
+  scheduleRefresh();
+}
+
+// A running download names the step it is on, so the wait reads as progress
+// instead of one anonymous spinner. The stage comes from the API and is absent
+// while a job is only retrying, hence the fallback.
+const STAGE_ICONS = {
+  content: "/icons/reading.svg",
+  script: "/icons/writing.svg",
+  tts: "/icons/voice.svg",
+  compose: "/icons/upload.svg",
+};
+
+// The control icon belongs to the episode state, not to the playback state.
+function episodeControlIcon(episode) {
+  switch (episode.state) {
+    case "ready":
+      return "/icons/play.svg";
+    case "processing":
+      return STAGE_ICONS[episode.stage] || "/icons/download.svg";
+    case "failed":
+      return "/icons/retry.svg";
+    default:
+      return "/icons/download.svg";
+  }
+}
+
+function episodeControlLabel(episode, isPlaying) {
+  switch (episode.state) {
+    case "processing":
+      return `${copy.downloadingEpisode(episode.title)} · ${stageText(episode.stage)}`;
+    case "failed":
+      return copy.retryEpisodeDownload(episode.title);
+    case "pending":
+      return copy.downloadEpisode(episode.title);
+    default:
+      return isPlaying ? copy.pauseEpisode(episode.title) : copy.playEpisode(episode.title);
+  }
+}
+
+function stageText(stage) {
+  return copy.generatingStages[stage] || copy.generatingStages.fallback;
+}
+
+// The toast reports a stage without any decoration: the row itself already
+// shows that a download is running.
+function stageToast(episode) {
+  return stageText(episode.stage);
+}
+
+let toastTimer = 0;
+
+// The toast is a reaction to a click, never to a poll: it appears when the
+// listener asks for something and fades out on its own.
+function showToast(message) {
+  const toast = elements.toast;
+  if (!toast) return;
+  window.clearTimeout(toastTimer);
+  toastTimer = 0;
+  toast.textContent = message;
+  if (!toast.hidden) {
+    // A hidden element restarts its entry animation when it is shown again, so
+    // a replaced message animates the same way a fresh one does.
+    toast.hidden = true;
+    void toast.offsetWidth;
+  }
+  toast.hidden = false;
+  toastTimer = window.setTimeout(hideToast, 3_600);
+}
+
+function hideToast() {
+  window.clearTimeout(toastTimer);
+  toastTimer = 0;
+  if (elements.toast) elements.toast.hidden = true;
 }
 
 function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
@@ -553,7 +755,7 @@ function renderPlaybackState() {
 }
 
 function moveInQueue(offset) {
-  const queue = visibleEpisodes();
+  const queue = playableEpisodes();
   if (queue.length === 0) return;
   const currentIndex = queue.findIndex((episode) => episode.id === state.currentEpisodeID);
   const nextIndex = currentIndex < 0 ? 0 : currentIndex + offset;
@@ -562,7 +764,7 @@ function moveInQueue(offset) {
 }
 
 function updateQueueButtons() {
-  const queue = visibleEpisodes();
+  const queue = playableEpisodes();
   const index = queue.findIndex((episode) => episode.id === state.currentEpisodeID);
   elements.previousButton.disabled = index <= 0;
   elements.nextButton.disabled = index < 0 || index >= queue.length - 1;
@@ -607,15 +809,26 @@ function updateProgress() {
   elements.remainingTime.textContent = `-${formatDuration(Math.max(0, duration - current))}`;
 }
 
+const EPISODE_STATES = ["ready", "pending", "processing", "failed"];
+
 function normalizeEpisode(episode) {
-  const publishedAt = parseDate(episode.published_at);
+  // Rows are grouped by the date of the article, not by the moment its audio
+  // was produced: a download that finishes today must not move an entry from
+  // yesterday into today's tab. The episode's own published_at is set when the
+  // audio is published, so the feed item timestamp wins when it exists.
+  const publishedAt = parseDate(episode.original_published_at) || parseDate(episode.published_at);
   const durationSeconds = Number(episode.audio_duration_seconds);
+  const audioURL = String(episode.audio_url || "");
+  const reportedState = String(episode.state || "");
   return {
     id: String(episode.id || ""),
     hidden: episode.hidden === true,
     sourceID: String(episode.source_id || ""),
     title: String(episode.title || copy.untitled),
-    audioURL: String(episode.audio_url || ""),
+    audioURL,
+    // The demo page and older responses only describe playable episodes.
+    state: EPISODE_STATES.includes(reportedState) ? reportedState : audioURL ? "ready" : "pending",
+    stage: String(episode.stage || ""),
     publishedAt,
     durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
     dayKey: publishedAt ? dateKey(publishedAt) : "",
@@ -662,6 +875,16 @@ function visibleEpisodes() {
       episode.dayKey === state.activeDate &&
       (state.activeSource === "all" || episode.sourceID === state.activeSource),
   );
+}
+
+// Only an episode with audio can join the playback queue: the others are still
+// waiting for their download.
+function isPlayable(episode) {
+  return episode.audioURL !== "";
+}
+
+function playableEpisodes() {
+  return visibleEpisodes().filter(isPlayable);
 }
 
 function countEpisodesForDate(key) {
@@ -811,7 +1034,9 @@ function setStatus(message) {
 
 function selectInitialEpisode() {
   const availableDateKeys = new Set(state.dateOptions.map((option) => option.key));
-  const latestEpisode = state.episodes.find((candidate) => availableDateKeys.has(candidate.dayKey));
+  const latestEpisode = state.episodes.find(
+    (candidate) => availableDateKeys.has(candidate.dayKey) && isPlayable(candidate),
+  );
   if (!latestEpisode) {
     renderAll();
     return;
@@ -1049,23 +1274,56 @@ function demoPayload() {
       demoEpisode("demo-3", "zhihu-topic", demoContent.titles[2], at(today, 5, 40)),
       demoEpisode("demo-4", "zhihu-daily", demoContent.titles[3], at(today, 5, 10)),
       demoEpisode("demo-5", "v2ex-hot", demoContent.titles[4], at(today, 4, 20)),
-      demoEpisode("demo-6", "zhihu-topic", demoContent.titles[5], null, at(today, 3, 55)),
-      demoEpisode("demo-7", "zhihu-daily", demoContent.titles[6], at(yesterday, 20, 15)),
-      demoEpisode("demo-8", "v2ex-hot", demoContent.titles[7], at(dayBefore, 18, 20)),
+      demoEpisode("demo-6", "zhihu-topic", demoContent.titles[5], null, at(today, 3, 55), "processing", "tts"),
+      demoEpisode("demo-7", "zhihu-daily", demoContent.titles[6], at(yesterday, 20, 15), undefined, "pending"),
+      demoEpisode("demo-8", "v2ex-hot", demoContent.titles[7], at(dayBefore, 18, 20), undefined, "failed"),
     ],
   };
 }
 
-function demoEpisode(id, sourceID, title, originalPublishedAt, publishedAt = originalPublishedAt) {
+// The demo page has no backend, so it also shows what a poll-only source
+// produces: episodes waiting for a download, one that is downloading, and one
+// whose download failed.
+function demoEpisode(id, sourceID, title, originalPublishedAt, publishedAt = originalPublishedAt, state = "ready", stage = "") {
   return {
     id,
     source_id: sourceID,
     title,
-    audio_url: DEMO_AUDIO,
-    audio_duration_seconds: 30,
+    audio_url: state === "ready" ? DEMO_AUDIO : "",
+    audio_duration_seconds: state === "ready" ? 30 : 0,
     published_at: publishedAt,
     original_published_at: originalPublishedAt,
+    state,
+    stage,
   };
+}
+
+// The demo page walks a download through its stages locally, because polling is
+// skipped without a backend.
+function simulateDemoDownload(episode) {
+  const stages = ["content", "script", "tts", "compose"];
+  episode.state = "processing";
+  episode.stage = stages[0];
+  showToast(stageToast(episode));
+  renderEpisodeList();
+
+  let position = 0;
+  const timer = window.setInterval(() => {
+    position += 1;
+    if (position < stages.length) {
+      episode.stage = stages[position];
+      renderEpisodeList();
+      showToast(stageToast(episode));
+      return;
+    }
+    window.clearInterval(timer);
+    episode.state = "ready";
+    episode.stage = "";
+    episode.audioURL = DEMO_AUDIO;
+    episode.durationSeconds = 30;
+    renderAll();
+    showToast(copy.generatingReady);
+  }, 2_500);
 }
 
 async function setupAdmin() {

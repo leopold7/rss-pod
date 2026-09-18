@@ -156,7 +156,7 @@ func TestAdminSessionAndVisibilityIntegration(t *testing.T) {
 	pool := adminTestPool(t)
 	cfg := &config.Config{Admin: config.AdminConfig{TOTPSecret: testAdminSecret}, Sources: []config.SourceConfig{{ID: "test", Name: "Test"}}}
 	cfg.Defaults.Podcast.MaxAge = "240h"
-	player := newPlayerServer(cfg, pool)
+	player := newPlayerServer(cfg, pool, nil)
 	admin := newAdminServer(cfg.Admin, pool, player)
 	mux := newPlayerMux(player, admin)
 	var cookie *http.Cookie

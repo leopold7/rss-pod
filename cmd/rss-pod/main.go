@@ -9,13 +9,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
 	"github.com/synrise25/rss-pod/internal/app"
 	"github.com/synrise25/rss-pod/internal/checker"
 	"github.com/synrise25/rss-pod/internal/config"
+	"github.com/synrise25/rss-pod/internal/jobs"
 )
 
 func main() {
@@ -45,6 +48,8 @@ func run() error {
 		return runMigrate(ctx, os.Args[2:])
 	case "poll":
 		return runPoll(ctx, os.Args[2:])
+	case "start":
+		return runStart(ctx, os.Args[2:])
 	case "retry":
 		return runRetry(ctx, os.Args[2:])
 	case "stop":
@@ -154,6 +159,84 @@ func runPoll(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runStart(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("start", flag.ContinueOnError)
+	configPath := flags.String("config", "config.yaml", "configuration file")
+	episodesValue := flags.String("episode", "", "comma-separated episode IDs")
+	sourcesValue := flags.String("sources", "", "comma-separated poll-only source IDs, or all")
+	limit := flags.Int("limit", 50, "maximum waiting episodes to start")
+	jsonOutput := flags.Bool("json", false, "print JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if (*episodesValue == "") == (*sourcesValue == "") {
+		return errors.New("exactly one of --episode or --sources is required")
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+
+	var started []jobs.StartedEpisode
+	if *episodesValue != "" {
+		episodeIDs, err := parseEpisodeIDs(*episodesValue)
+		if err != nil {
+			return err
+		}
+		started, err = app.StartEpisodes(ctx, cfg, episodeIDs)
+		if err != nil {
+			return err
+		}
+	} else {
+		sources, err := app.ParsePollOnlySources(cfg, *sourcesValue)
+		if err != nil {
+			return err
+		}
+		started, err = app.StartWaitingEpisodes(ctx, cfg, sources, *limit)
+		if err != nil {
+			return err
+		}
+	}
+
+	if *jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(started)
+	}
+	for _, episode := range started {
+		fmt.Printf("started episode=%s job=%s job_id=%d\n", episode.EpisodeID, episode.JobKind, episode.JobID)
+	}
+	if len(started) == 0 {
+		fmt.Println("no waiting episodes found")
+	}
+	return nil
+}
+
+// parseEpisodeIDs reads a comma-separated episode ID list, ignoring duplicates.
+func parseEpisodeIDs(value string) ([]uuid.UUID, error) {
+	seen := make(map[uuid.UUID]struct{})
+	episodeIDs := make([]uuid.UUID, 0)
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		episodeID, err := uuid.Parse(item)
+		if err != nil {
+			return nil, fmt.Errorf("invalid episode ID %q", item)
+		}
+		if _, duplicate := seen[episodeID]; duplicate {
+			continue
+		}
+		seen[episodeID] = struct{}{}
+		episodeIDs = append(episodeIDs, episodeID)
+	}
+	if len(episodeIDs) == 0 {
+		return nil, errors.New("--episode must contain at least one episode ID")
+	}
+	return episodeIDs, nil
+}
+
 func runRetry(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("retry", flag.ContinueOnError)
 	configPath := flags.String("config", "config.yaml", "configuration file")
@@ -219,6 +302,7 @@ func runDelete(ctx context.Context, args []string) error {
 	sourcesValue := flags.String("sources", "", "comma-separated source IDs, or all")
 	limit := flags.Int("limit", 200, "maximum failed episodes to delete")
 	dryRun := flags.Bool("dry-run", false, "report what would be deleted without deleting")
+	includeWaiting := flags.Bool("include-waiting", false, "also delete poll-only episodes waiting for a start")
 	ignore := flags.Bool("ignore", false, "remember deleted items so later polls skip them")
 	listIgnored := flags.Bool("list-ignored", false, "list remembered items instead of deleting")
 	unignore := flags.Bool("unignore", false, "forget remembered items instead of deleting")
@@ -268,9 +352,10 @@ func runDelete(ctx context.Context, args []string) error {
 	}
 
 	result, err := app.DeleteFailedTasks(ctx, cfg, sources, app.DeleteFailedTasksOptions{
-		Limit:  *limit,
-		DryRun: *dryRun,
-		Ignore: *ignore,
+		Limit:          *limit,
+		DryRun:         *dryRun,
+		Ignore:         *ignore,
+		IncludeWaiting: *includeWaiting,
 	})
 	if err != nil {
 		return err
@@ -330,6 +415,7 @@ func usage() {
   check    validate configuration and external services
   migrate  apply River and application database migrations
   poll     explicitly enqueue one or more source polls
+  start    start episodes a poll-only source left waiting for a listener
   retry    re-queue failed episodes at the stage that failed
   stop     cancel every in-flight job and stop their work
   delete   purge failed episodes, their content, and poll records

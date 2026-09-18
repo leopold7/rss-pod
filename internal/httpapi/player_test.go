@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/synrise25/rss-pod/internal/config"
 )
@@ -126,7 +131,7 @@ func TestListPlayerSourcesReturnsOnlyPublicFields(t *testing.T) {
 	server := newPlayerServer(&config.Config{Sources: []config.SourceConfig{
 		{ID: "enabled", Name: "Enabled source", Enabled: true, Feed: config.FeedConfig{URL: "https://private.example/feed"}},
 		{ID: "disabled", Name: "Disabled source", Enabled: false},
-	}}, nil)
+	}}, nil, nil)
 	response := httptest.NewRecorder()
 	server.listSources(response, httptest.NewRequest("GET", "/api/v1/player/sources", nil))
 
@@ -171,10 +176,10 @@ func TestNewPlayerServerHonoursThemeToggleConfig(t *testing.T) {
 	disabled := false
 	if server := newPlayerServer(&config.Config{Runtime: config.RuntimeConfig{
 		HTTP: config.HTTPConfig{ThemeToggle: &disabled},
-	}}, nil); server.themeToggle {
+	}	}, nil, nil); server.themeToggle {
 		t.Fatal("explicit runtime.http.theme_toggle=false should hide the switch")
 	}
-	if server := newPlayerServer(&config.Config{}, nil); !server.themeToggle {
+	if server := newPlayerServer(&config.Config{}, nil, nil); !server.themeToggle {
 		t.Fatal("the theme switch should be visible when runtime.http.theme_toggle is unset")
 	}
 }
@@ -242,5 +247,184 @@ func TestParseOptionalRFC3339RejectsInvalidValue(t *testing.T) {
 	}
 	if w.Code != 400 {
 		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestPlayerEpisodeState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status   string
+		hasAudio bool
+		state    string
+		stage    string
+	}{
+		{status: "published", hasAudio: true, state: "ready"},
+		{status: "published", hasAudio: false, state: "failed"},
+		{status: "queued", state: "pending"},
+		{status: "resolving_content", state: "processing", stage: "content"},
+		{status: "content_ready", state: "processing", stage: "script"},
+		{status: "generating_script", state: "processing", stage: "script"},
+		{status: "script_ready", state: "processing", stage: "tts"},
+		{status: "generating_tts", state: "processing", stage: "tts"},
+		{status: "composing", state: "processing", stage: "compose"},
+		{status: "retrying", state: "processing"},
+		{status: "failed", state: "failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.status, func(t *testing.T) {
+			state, stage := playerEpisodeState(test.status, test.hasAudio)
+			if state != test.state || stage != test.stage {
+				t.Fatalf("playerEpisodeState(%q, %t) = %q/%q, want %q/%q",
+					test.status, test.hasAudio, state, stage, test.state, test.stage)
+			}
+		})
+	}
+}
+
+func TestStartEpisodeRejectsInvalidID(t *testing.T) {
+	t.Parallel()
+
+	response := httptest.NewRecorder()
+	newPlayerMux(&playerServer{}).ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodPost, "/api/v1/player/episodes/not-an-id/start", nil),
+	)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
+	}
+}
+
+func TestStartEpisodeIntegration(t *testing.T) {
+	pool := adminTestPool(t)
+	cfg := &config.Config{Sources: []config.SourceConfig{
+		{ID: "manual", Name: "Manual", Enabled: true, PollOnly: true},
+		{ID: "automatic", Name: "Automatic", Enabled: true},
+	}}
+	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	player := newPlayerServer(cfg, pool, client)
+	mux := newPlayerMux(player)
+	ctx := context.Background()
+
+	insertEpisode := func(sourceID, status, audioURL string, publishedAt *time.Time) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		if _, err := pool.Exec(ctx, `
+			WITH f AS (
+			    INSERT INTO feed_items (source_id, external_id, title, content, published_at)
+			    VALUES ($2, $3, 'Episode', 'content', now())
+			    RETURNING id
+			)
+			INSERT INTO episodes (id, source_id, feed_item_id, title, status, audio_url, published_at)
+			SELECT $1, $2, id, 'Episode', $4, $5, $6 FROM f
+		`, id, sourceID, uuid.NewString(), status, audioURL, publishedAt); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	start := func(id uuid.UUID) *httptest.ResponseRecorder {
+		t.Helper()
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(
+			http.MethodPost, "/api/v1/player/episodes/"+id.String()+"/start", nil))
+		return response
+	}
+	listEpisodes := func() string {
+		t.Helper()
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/player/episodes", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("player episodes status = %d: %s", response.Code, response.Body.String())
+		}
+		return response.Body.String()
+	}
+	countJobs := func(kind string, episodeID uuid.UUID) int {
+		t.Helper()
+		var count int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM river_job WHERE kind = $1 AND args->>'episode_id' = $2
+		`, kind, episodeID.String()).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	episodeStatus := func(id uuid.UUID) string {
+		t.Helper()
+		var status string
+		if err := pool.QueryRow(ctx, `SELECT status FROM episodes WHERE id = $1`, id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+
+	// A listener starts an episode a poll-only source left waiting.
+	pending := insertEpisode("manual", "queued", "", nil)
+	response := start(pending)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start status = %d, want 202: %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		EpisodeID uuid.UUID `json:"episode_id"`
+		JobKind   string    `json:"job_kind"`
+		State     string    `json:"state"`
+		Stage     string    `json:"stage"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.EpisodeID != pending || payload.JobKind != "resolve_content" || payload.State != "processing" || payload.Stage != "content" {
+		t.Fatalf("start payload = %#v", payload)
+	}
+	if got := episodeStatus(pending); got != "resolving_content" {
+		t.Fatalf("episode status = %q, want resolving_content", got)
+	}
+	if got := countJobs("resolve_content", pending); got != 1 {
+		t.Fatalf("resolve_content jobs = %d, want 1", got)
+	}
+
+	// A second tap must report the running generation instead of queueing it twice.
+	if code := start(pending).Code; code != http.StatusConflict {
+		t.Fatalf("second start status = %d, want 409", code)
+	}
+	if got := countJobs("resolve_content", pending); got != 1 {
+		t.Fatalf("resolve_content jobs after a second tap = %d, want 1", got)
+	}
+
+	body := listEpisodes()
+	if !strings.Contains(body, pending.String()) || !strings.Contains(body, `"state":"processing"`) {
+		t.Fatalf("player does not show the running episode: %s", body)
+	}
+
+	// Automatic sources keep their automatic behaviour on both sides.
+	automatic := insertEpisode("automatic", "queued", "", nil)
+	if code := start(automatic).Code; code != http.StatusConflict {
+		t.Fatalf("start of an automatic episode status = %d, want 409", code)
+	}
+	if body := listEpisodes(); strings.Contains(body, automatic.String()) {
+		t.Fatalf("player listed an automatic episode before it was generated: %s", body)
+	}
+
+	// Published episodes still play through the unchanged path.
+	publishedAt := time.Now()
+	published := insertEpisode("automatic", "published", "https://media.example.com/episode.mp3", &publishedAt)
+	body = listEpisodes()
+	if !strings.Contains(body, published.String()) || !strings.Contains(body, `"state":"ready"`) {
+		t.Fatalf("player does not show a published episode: %s", body)
+	}
+
+	// A failed episode resumes where it stopped.
+	failed := insertEpisode("manual", "failed", "", nil)
+	if code := start(failed).Code; code != http.StatusAccepted {
+		t.Fatalf("restart status = %d, want 202", code)
+	}
+	if got := episodeStatus(failed); got != "resolving_content" {
+		t.Fatalf("restarted episode status = %q, want resolving_content", got)
+	}
+
+	if code := start(uuid.New()).Code; code != http.StatusNotFound {
+		t.Fatalf("unknown episode status = %d, want 404", code)
 	}
 }

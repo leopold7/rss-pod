@@ -55,6 +55,11 @@ func episodeAttemptStatus(ctx context.Context, attempt, maxAttempts int, workErr
 	return "retrying"
 }
 
+// The pipeline args below tag EpisodeID as unique, but River only deduplicates
+// when InsertOpts enables uniqueness (UniqueOpts.ByArgs and friends); a struct
+// tag alone is inert. These jobs are therefore not deduplicated, and the
+// episodes.status column is the single source of truth for whether a stage is
+// already running.
 type ResolveContentArgs struct {
 	EpisodeID string `json:"episode_id" river:"unique"`
 }

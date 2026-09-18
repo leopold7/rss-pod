@@ -114,6 +114,28 @@ func TestPlayerWebHandlerServesThemeToggleInsideHeaderActions(t *testing.T) {
 	}
 }
 
+func TestPlayerWebHandlerServesStageIcons(t *testing.T) {
+	t.Parallel()
+
+	// One icon per download stage, plus the retry control a failed download
+	// shows; the player swaps them in as the episode state changes.
+	for _, icon := range []string{"reading.svg", "writing.svg", "voice.svg", "upload.svg", "retry.svg"} {
+		request := httptest.NewRequest(http.MethodGet, "/icons/"+icon, nil)
+		response := httptest.NewRecorder()
+		playerWebHandler().ServeHTTP(response, request)
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", icon, response.Code)
+		}
+		if contentType := response.Header().Get("Content-Type"); contentType != "image/svg+xml" {
+			t.Fatalf("%s: Content-Type = %q, want image/svg+xml", icon, contentType)
+		}
+		if response.Body.Len() == 0 {
+			t.Fatalf("embedded %s is empty", icon)
+		}
+	}
+}
+
 func TestPlayerWebHandlerDoesNotCaptureUnknownAPIPaths(t *testing.T) {
 	t.Parallel()
 
@@ -159,5 +181,23 @@ func TestPlayerWebHandlerServesGitHubIcon(t *testing.T) {
 	}
 	if response.Body.Len() == 0 {
 		t.Fatal("embedded GitHub icon is empty")
+	}
+}
+
+func TestPlayerWebHandlerServesDownloadIcon(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/icons/download.svg", nil)
+	response := httptest.NewRecorder()
+	playerWebHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if contentType := response.Header().Get("Content-Type"); contentType != "image/svg+xml" {
+		t.Fatalf("Content-Type = %q, want image/svg+xml", contentType)
+	}
+	if response.Body.Len() == 0 {
+		t.Fatal("embedded download icon is empty")
 	}
 }
