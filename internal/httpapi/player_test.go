@@ -144,6 +144,39 @@ func TestListPlayerSourcesReturnsOnlyPublicFields(t *testing.T) {
 	}
 }
 
+// The filter renders the list in the order the endpoint returns, so the
+// optional order of a source and of a subscription has to survive the handler.
+func TestListPlayerSourcesFollowsConfiguredOrder(t *testing.T) {
+	t.Parallel()
+
+	second := 2
+	server := newPlayerServer(&config.Config{
+		Sources: []config.SourceConfig{
+			{ID: "first", Name: "First", Enabled: true},
+			{ID: "third", Name: "Third", Enabled: true},
+		},
+		Subscriptions: []config.SubscriptionConfig{
+			{ID: "second", Name: "Second", Enabled: true, Order: &second},
+		},
+	}, nil, nil)
+	response := httptest.NewRecorder()
+	server.listSources(response, httptest.NewRequest("GET", "/api/v1/player/sources", nil))
+
+	var payload struct {
+		Sources []config.SourceRef `json:"sources"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode sources: %v", err)
+	}
+	got := make([]string, 0, len(payload.Sources))
+	for _, source := range payload.Sources {
+		got = append(got, source.ID)
+	}
+	if want := "first,second,third"; strings.Join(got, ",") != want {
+		t.Fatalf("sources = %v, want %s", got, want)
+	}
+}
+
 func TestPlayerConfigReportsThemeToggle(t *testing.T) {
 	t.Parallel()
 
@@ -176,7 +209,7 @@ func TestNewPlayerServerHonoursThemeToggleConfig(t *testing.T) {
 	disabled := false
 	if server := newPlayerServer(&config.Config{Runtime: config.RuntimeConfig{
 		HTTP: config.HTTPConfig{ThemeToggle: &disabled},
-	}	}, nil, nil); server.themeToggle {
+	}}, nil, nil); server.themeToggle {
 		t.Fatal("explicit runtime.http.theme_toggle=false should hide the switch")
 	}
 	if server := newPlayerServer(&config.Config{}, nil, nil); !server.themeToggle {

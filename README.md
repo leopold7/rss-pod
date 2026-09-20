@@ -294,6 +294,15 @@ deleting the remote object or hiding the remote episode does not remove an
 already mirrored copy here, and its retention is the remote deployment's window,
 not this one.
 
+The player's source filter lists the enabled sources and then the enabled
+subscriptions, in configuration order, and paging follows that same sequence.
+`order` pins an entry to a position in that one list: `1` comes first, an entry
+without an order keeps the configuration sequence and fills the positions the
+ordered entries leave open, and an `order` beyond the last entry moves towards
+the end. Sources and subscriptions share the filter, so an `order` must be
+unique across the entries that are enabled; a disabled entry keeps its value
+without joining the list.
+
 The main commands are:
 
 | Command | Purpose |

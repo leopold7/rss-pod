@@ -153,6 +153,60 @@ func TestPollOnlySourceIDsSkipsDisabledSources(t *testing.T) {
 	}
 }
 
+func TestEpisodeSourcesOrder(t *testing.T) {
+	order := func(value int) *int { return &value }
+	tests := []struct {
+		name          string
+		sources       []SourceConfig
+		subscriptions []SubscriptionConfig
+		want          []string
+	}{
+		{
+			name:    "keeps the configuration sequence by default",
+			sources: []SourceConfig{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}},
+			want:    []string{"a", "b"},
+		},
+		{
+			name:    "skips disabled entries",
+			sources: []SourceConfig{{ID: "a", Enabled: true}, {ID: "paused"}, {ID: "b", Enabled: true, Order: order(1)}},
+			want:    []string{"b", "a"},
+		},
+		{
+			name:    "unset entries fill the free positions",
+			sources: []SourceConfig{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}, {ID: "c", Enabled: true, Order: order(1)}},
+			want:    []string{"c", "a", "b"},
+		},
+		{
+			name:    "an order keeps the position it asks for",
+			sources: []SourceConfig{{ID: "a", Enabled: true, Order: order(3)}, {ID: "b", Enabled: true}, {ID: "c", Enabled: true}},
+			want:    []string{"b", "c", "a"},
+		},
+		{
+			name:          "sources and subscriptions share one sequence",
+			sources:       []SourceConfig{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}},
+			subscriptions: []SubscriptionConfig{{ID: "peer", Enabled: true, Order: order(2)}},
+			want:          []string{"a", "peer", "b"},
+		},
+		{
+			name:    "an order beyond the list moves towards the end",
+			sources: []SourceConfig{{ID: "a", Enabled: true, Order: order(9)}, {ID: "b", Enabled: true}},
+			want:    []string{"b", "a"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{Sources: test.sources, Subscriptions: test.subscriptions}
+			got := make([]string, 0, len(test.want))
+			for _, ref := range cfg.EpisodeSources() {
+				got = append(got, ref.ID)
+			}
+			if strings.Join(got, ",") != strings.Join(test.want, ",") {
+				t.Fatalf("EpisodeSources() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestLoadSubscriptions(t *testing.T) {
 	cfg, err := Load(writeConfig(t, minimalConfig+subscriptionFixture))
 	if err != nil {
@@ -168,6 +222,9 @@ func TestLoadSubscriptions(t *testing.T) {
 	}
 	if got := subscription.EffectiveLimit(); got != 500 {
 		t.Fatalf("EffectiveLimit() = %d, want 500", got)
+	}
+	if subscription.Order == nil || *subscription.Order != 2 {
+		t.Fatalf("subscription.Order = %v, want 2", subscription.Order)
 	}
 	if got, err := subscription.LookbackDuration(); err != nil || got != 48*time.Hour {
 		t.Fatalf("LookbackDuration() = %s, %v", got, err)
@@ -279,6 +336,28 @@ func TestValidateSubscriptions(t *testing.T) {
 			mutate:  func(c *Config) { c.Subscriptions[0].Limit = -1 },
 			wantErr: "limit must be between",
 		},
+		{
+			name:    "order below one",
+			mutate:  func(c *Config) { c.Subscriptions[0].Order = intPtr(0) },
+			wantErr: "subscription peer order must be at least 1",
+		},
+		{
+			name: "order colliding with a source",
+			mutate: func(c *Config) {
+				c.Subscriptions[0].Order = intPtr(1)
+				c.Sources = append([]SourceConfig(nil), c.Sources...)
+				c.Sources[0].Order = intPtr(1)
+			},
+			wantErr: "subscription peer order 1 is already used by source test",
+		},
+		{
+			name: "order below one on a source",
+			mutate: func(c *Config) {
+				c.Sources = append([]SourceConfig(nil), c.Sources...)
+				c.Sources[0].Order = intPtr(-2)
+			},
+			wantErr: "source test order must be at least 1",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -292,6 +371,28 @@ func TestValidateSubscriptions(t *testing.T) {
 		})
 	}
 }
+
+// A disabled entry never reaches the player filter, so its order may repeat a
+// position that an enabled entry already holds.
+func TestValidateFilterOrderIgnoresDisabledEntries(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig+subscriptionFixture))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Sources[0].Order = intPtr(1)
+	cfg.Subscriptions[0].Order = intPtr(1)
+	cfg.Subscriptions[0].Enabled = false
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled entry with a duplicate order rejected: %v", err)
+	}
+
+	cfg.Subscriptions[0].Enabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "already used by source test") {
+		t.Fatalf("Validate() error = %v, want duplicate order error", err)
+	}
+}
+
+func intPtr(value int) *int { return &value }
 
 func writeConfig(t *testing.T, data string) string {
 	t.Helper()
@@ -314,6 +415,7 @@ subscriptions:
     schedule: {cron: "0 8 * * *"}
     lookback: 48h
     limit: 500
+    order: 2
 `
 
 func TestLoadDoesNotInterpolateEnvironmentIntoYAML(t *testing.T) {

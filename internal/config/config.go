@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -428,7 +429,13 @@ type SourceConfig struct {
 	// generation. The default keeps the fully automatic pipeline.
 	// PollOnly 让来源只负责发现内容：轮询只入库并创建条目，等待听众在播放器里
 	// 手动开始生成；默认关闭时保持全自动流水线。
-	PollOnly   bool              `yaml:"poll_only" json:"poll_only"`
+	PollOnly bool `yaml:"poll_only" json:"poll_only"`
+	// Order places the source in the player's filter; 1 comes first. An entry
+	// without an order keeps the configuration sequence and fills the positions
+	// that the ordered entries leave open.
+	// Order 决定该来源在播放器筛选中的位置，1 表示排在最前；不填写时按配置顺序
+	// 填补已排序条目留下的位置。
+	Order      *int              `yaml:"order" json:"order,omitempty"`
 	Feed       FeedConfig        `yaml:"feed" json:"feed"`
 	Schedule   ScheduleConfig    `yaml:"schedule" json:"schedule"`
 	Content    *ContentConfig    `yaml:"content" json:"content,omitempty"`
@@ -451,6 +458,12 @@ type SubscriptionConfig struct {
 	ID      string `yaml:"id" json:"id"`
 	Name    string `yaml:"name" json:"name"`
 	Enabled bool   `yaml:"enabled" json:"enabled"`
+	// Order places the subscription in the player's filter, which both lists
+	// share; 1 comes first. An entry without an order keeps the configuration
+	// sequence and fills the positions that the ordered entries leave open.
+	// Order 决定该订阅在播放器筛选中的位置（来源与订阅共用同一个筛选），1 表示
+	// 排在最前；不填写时按配置顺序填补已排序条目留下的位置。
+	Order *int `yaml:"order" json:"order,omitempty"`
 	// BaseURL is the origin of the remote deployment, without the API path.
 	BaseURL string `yaml:"base_url" json:"base_url"`
 	// SourceID selects one source of the remote deployment; empty mirrors every
@@ -502,18 +515,73 @@ type SourceRef struct {
 }
 
 // EpisodeSources lists every enabled owner of episodes: the feed sources that
-// generate them, followed by the subscriptions that mirror them.
+// generate them and the subscriptions that mirror them, in the order the
+// player's filter renders them.
 func (c *Config) EpisodeSources() []SourceRef {
-	refs := make([]SourceRef, 0, len(c.Sources)+len(c.Subscriptions))
+	entries := make([]episodeSource, 0, len(c.Sources)+len(c.Subscriptions))
 	for _, source := range c.Sources {
 		if source.Enabled {
-			refs = append(refs, SourceRef{ID: source.ID, Name: source.Name})
+			entries = append(entries, episodeSource{ref: SourceRef{ID: source.ID, Name: source.Name}, order: source.Order})
 		}
 	}
 	for _, subscription := range c.Subscriptions {
 		if subscription.Enabled {
-			refs = append(refs, SourceRef{ID: subscription.ID, Name: subscription.Name})
+			entries = append(entries, episodeSource{ref: SourceRef{ID: subscription.ID, Name: subscription.Name}, order: subscription.Order})
 		}
+	}
+	return orderEpisodeSources(entries)
+}
+
+// episodeSource is one filter entry with the optional position that its source
+// or subscription asked for.
+type episodeSource struct {
+	ref   SourceRef
+	order *int
+}
+
+// orderEpisodeSources places the entries that carry an order at their position
+// and fills the slots that stay open with the unset entries, which keep their
+// configuration sequence. An order beyond the last entry moves towards the
+// end, and positions are resolved in ascending order so two entries never
+// claim the same slot.
+func orderEpisodeSources(entries []episodeSource) []SourceRef {
+	refs := make([]SourceRef, len(entries))
+	if len(entries) == 0 {
+		return refs
+	}
+
+	ordered := make([]episodeSource, 0, len(entries))
+	unset := make([]episodeSource, 0, len(entries))
+	for _, entry := range entries {
+		if entry.order == nil {
+			unset = append(unset, entry)
+			continue
+		}
+		ordered = append(ordered, entry)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return *ordered[i].order < *ordered[j].order })
+
+	taken := make([]bool, len(entries))
+	next := 0
+	for _, entry := range ordered {
+		position := *entry.order - 1
+		if position < next {
+			position = next
+		}
+		if last := len(entries) - 1; position > last {
+			position = last
+		}
+		refs[position] = entry.ref
+		taken[position] = true
+		next = position + 1
+	}
+	slot := 0
+	for _, entry := range unset {
+		for taken[slot] {
+			slot++
+		}
+		refs[slot] = entry.ref
+		taken[slot] = true
 	}
 	return refs
 }
@@ -690,6 +758,9 @@ func (c *Config) Validate() error {
 	}
 
 	seen := make(map[string]struct{}, len(c.Sources))
+	// Sources and subscriptions share the player filter, so they also share one
+	// namespace of filter positions.
+	orderSeen := make(map[int]string, len(c.Sources)+len(c.Subscriptions))
 	cronParser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	for i := range c.Sources {
 		source := &c.Sources[i]
@@ -726,6 +797,9 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("source %s podcast.max_age must be a positive duration", source.ID)
 			}
 		}
+		if err := validateFilterOrder("source "+source.ID, source.Enabled, source.Order, orderSeen); err != nil {
+			return err
+		}
 	}
 	subSeen := make(map[string]struct{}, len(c.Subscriptions))
 	for i := range c.Subscriptions {
@@ -754,7 +828,31 @@ func (c *Config) Validate() error {
 		if subscription.Limit < 0 || subscription.Limit > MaxSubscriptionLimit {
 			return fmt.Errorf("subscription %s limit must be between 1 and %d, or zero for the default", subscription.ID, MaxSubscriptionLimit)
 		}
+		if err := validateFilterOrder("subscription "+subscription.ID, subscription.Enabled, subscription.Order, orderSeen); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// validateFilterOrder checks one position of the player filter and remembers
+// who claimed it. Sources and subscriptions share the filter, so they also
+// share the set of positions; only enabled entries reach that filter and can
+// therefore collide.
+func validateFilterOrder(owner string, enabled bool, order *int, seen map[int]string) error {
+	if order == nil {
+		return nil
+	}
+	if *order < 1 {
+		return fmt.Errorf("%s order must be at least 1", owner)
+	}
+	if !enabled {
+		return nil
+	}
+	if other, ok := seen[*order]; ok {
+		return fmt.Errorf("%s order %d is already used by %s", owner, *order, other)
+	}
+	seen[*order] = owner
 	return nil
 }
 

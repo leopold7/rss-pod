@@ -264,6 +264,12 @@ sources:
   - id: zhihu-daily
     name: 知乎日报
     enabled: false
+    # Order places the entry in the player's source filter; 1 comes first. An
+    # entry without an order keeps the configuration sequence and fills the
+    # positions that the ordered entries leave open.
+    # order 决定该条目在播放器来源筛选中的位置，1 表示排在最前；不填写时按配置顺序
+    # 填补已排序条目留下的位置。
+    # order: 1
     # Poll-only keeps this source discover-only: polling only stores new entries,
     # the player lists their titles with a download button, and generation starts
     # per episode when a listener taps it. Unset or false keeps the automatic pipeline.
@@ -344,8 +350,12 @@ sources:
 # 也能收录别人的播客。远端音频按 URL 直接引用，不复制、也不在本地重新生成，被镜像的
 # 节目一入库即可播放。
 # id becomes the source_id of the mirrored episodes and the name shown in the
-# player filter, so it must not repeat a source id.
+# player filter, so it must not repeat a source id. A subscription shares that
+# one filter with the sources above, so order positions it in the same list and
+# must not repeat the order of an enabled source.
 # id 会成为被镜像条目的 source_id 和播放器筛选项名称，因此不能与 source id 重复。
+# 订阅与上面的来源共用同一个筛选，因此 order 也是在这个列表里定位，并且不能与已启用
+# source 的 order 重复。
 # Pulling a remote deployment is an external call, so the example stays disabled.
 # 拉取远端部署属于外部调用，因此示例默认关闭。
 subscriptions:
@@ -369,3 +379,4 @@ subscriptions:
     # Page size requested from the remote endpoint; the remote maximum is 500.
     # 向远端接口请求的分页大小，对方上限为 500。
     limit: 200
+    # order: 2
