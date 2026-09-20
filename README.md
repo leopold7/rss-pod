@@ -1,3 +1,36 @@
+## What this fork adds
+
+Compared with the upstream project, this fork adds the following features:
+
+- **Subscriptions**: you can now subscribe to someone else's rss-pod deployment
+- **Dark mode**: light, dark, and follow-system themes
+- **Swipe navigation**: swipe to switch between categories
+- **Category view**: the page can be browsed grouped by category
+- **Poll-only (manual download) mode**: poll articles first and show them on the
+  page, then pick the ones to download and push through the rest of the pipeline.
+  The upside is that you can follow a large number of feeds and decide for
+  yourself which article you want to listen to
+- **Listen later**: long-press an episode to add it to "Listen later", which is
+  shown as its own category, and can be removed automatically after playing
+- **Dim listened episodes**: already-listened episodes can be dimmed by title to
+  mark them as heard
+- **Local cache**: automatically preload the next episode
+- **Default category**: open the page directly in a specific category
+- **Player**: marquee title, plus a collapsible drawer
+- **CLI**: additional delete and retry commands
+
+
+## Docker部署
+
+```shell
+docker pull ghcr.io/leopold7/rss-pod:latest
+```
+
+---
+
+
+---
+
 <div align="center">
   <img src="web/icons/apple-touch-icon.png" width="112" alt="rss-pod logo">
   <h1>rss-pod</h1>
