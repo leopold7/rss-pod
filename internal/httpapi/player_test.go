@@ -461,3 +461,156 @@ func TestStartEpisodeIntegration(t *testing.T) {
 		t.Fatalf("unknown episode status = %d, want 404", code)
 	}
 }
+
+func TestMediaAudioURL(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		base      string
+		mapped    string
+		host      string
+		storedURL string
+		objectKey string
+		want      string
+	}{
+		{
+			name:      "a mapped host is rebuilt on its own media origin",
+			base:      "https://media-a.example.com/",
+			mapped:    "https://media-b.example.com",
+			host:      "pod-b.example.com",
+			storedURL: "https://media-a.example.com/sources/test/episodes/one.mp3",
+			objectKey: "sources/test/episodes/one.mp3",
+			want:      "https://media-b.example.com/sources/test/episodes/one.mp3",
+		},
+		{
+			name:      "an unmapped host keeps the default media origin",
+			base:      "https://media-a.example.com/",
+			mapped:    "https://media-b.example.com",
+			host:      "pod-a.example.com",
+			storedURL: "https://old.example.com/sources/test/episodes/one.mp3",
+			objectKey: "sources/test/episodes/one.mp3",
+			want:      "https://media-a.example.com/sources/test/episodes/one.mp3",
+		},
+		{
+			// A mapping holds a complete base URL, so a path-style deployment
+			// repeats its bucket path in the mapped value.
+			name:      "a mapping replaces the default including its bucket path",
+			base:      "https://media-a.example.com/rsspod-media",
+			mapped:    "https://media-b.example.com/rsspod-media",
+			host:      "pod-b.example.com",
+			storedURL: "https://media-a.example.com/rsspod-media/sources/test/episodes/one.mp3",
+			objectKey: "sources/test/episodes/one.mp3",
+			want:      "https://media-b.example.com/rsspod-media/sources/test/episodes/one.mp3",
+		},
+		{
+			name:      "a mirrored episode keeps its remote address",
+			base:      "https://media-a.example.com/",
+			mapped:    "https://media-b.example.com",
+			host:      "pod-b.example.com",
+			storedURL: "https://peer.example.com/two.mp3",
+			want:      "https://peer.example.com/two.mp3",
+		},
+		{
+			name:      "an episode without an object key is left alone",
+			base:      "https://media-a.example.com/",
+			mapped:    "https://media-b.example.com",
+			host:      "pod-b.example.com",
+			storedURL: "",
+			want:      "",
+		},
+		{
+			name:      "a missing default falls back to the stored address",
+			mapped:    "https://media-b.example.com",
+			host:      "pod-a.example.com",
+			storedURL: "https://media-a.example.com/sources/test/episodes/one.mp3",
+			objectKey: "sources/test/episodes/one.mp3",
+			want:      "https://media-a.example.com/sources/test/episodes/one.mp3",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			storage := config.StorageConfig{
+				PublicMediaBaseURL: test.base,
+				PublicMediaHosts:   map[string]string{"pod-b.example.com": test.mapped},
+			}
+			if got := mediaAudioURL(test.host, test.storedURL, test.objectKey, storage); got != test.want {
+				t.Fatalf("mediaAudioURL(%q, %q, %q) = %q, want %q",
+					test.host, test.storedURL, test.objectKey, got, test.want)
+			}
+		})
+	}
+}
+
+// One deployment can answer on several public domains, and each domain can
+// publish its audio under its own media host. Both the player API and the
+// podcast feed therefore rebuild the address of a locally composed episode for
+// the host that asked, while a mirrored subscription episode keeps the remote
+// address of the deployment it came from.
+func TestPlayerEpisodesUseTheRequestHostMediaOrigin(t *testing.T) {
+	pool := adminTestPool(t)
+	cfg := &config.Config{Sources: []config.SourceConfig{{ID: "test", Name: "Test", Enabled: true}}}
+	cfg.Defaults.Podcast.MaxAge = "72h"
+	cfg.Runtime.Storage.PublicMediaBaseURL = "https://media-a.example.com"
+	cfg.Runtime.Storage.PublicMediaHosts = map[string]string{"pod-b.example.com": "https://media-b.example.com"}
+	mux := newPlayerMux(newPlayerServer(cfg, pool, nil))
+
+	ctx := context.Background()
+	insert := func(audioURL, objectKey string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+			WITH f AS (
+			    INSERT INTO feed_items (source_id, external_id, title, content, published_at)
+			    VALUES ('test', $1, 'Episode', 'content', now())
+			    RETURNING id
+			)
+			INSERT INTO episodes (id, source_id, feed_item_id, title, status, audio_url, audio_object_key, published_at)
+			SELECT $2, 'test', id, 'Episode', 'published', $3, $4, now() FROM f
+		`, uuid.NewString(), uuid.New(), audioURL, objectKey); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("https://media-a.example.com/sources/test/episodes/one.mp3", "sources/test/episodes/one.mp3")
+	insert("https://peer.example.com/two.mp3", "")
+
+	list := func(host string) string {
+		t.Helper()
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://"+host+"/api/v1/player/episodes", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("host %s: player status = %d: %s", host, response.Code, response.Body.String())
+		}
+		return response.Body.String()
+	}
+	if body := list("pod-b.example.com"); !strings.Contains(body, `"audio_url":"https://media-b.example.com/sources/test/episodes/one.mp3"`) {
+		t.Fatalf("mapped domain did not receive its own media host: %s", body)
+	}
+	if body := list("pod-a.example.com"); !strings.Contains(body, `"audio_url":"https://media-a.example.com/sources/test/episodes/one.mp3"`) {
+		t.Fatalf("unmapped domain did not keep the default media host: %s", body)
+	}
+	for _, host := range []string{"pod-a.example.com", "pod-b.example.com"} {
+		if body := list(host); !strings.Contains(body, `"audio_url":"https://peer.example.com/two.mp3"`) {
+			t.Fatalf("mirrored episode was rewritten for %s: %s", host, body)
+		}
+	}
+
+	// The feed is fetched from a single domain as well, so its enclosure has to
+	// follow the same mapping instead of the stored address.
+	server := &Server{config: cfg, pool: pool}
+	feed := func(host string) string {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/v1/sources/test/podcast.xml", nil)
+		request.SetPathValue("sourceID", "test")
+		response := httptest.NewRecorder()
+		server.podcastFeed(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("host %s: feed status = %d: %s", host, response.Code, response.Body.String())
+		}
+		return response.Body.String()
+	}
+	if body := feed("pod-b.example.com"); !strings.Contains(body, `url="https://media-b.example.com/sources/test/episodes/one.mp3"`) {
+		t.Fatalf("feed did not use the media host of its own domain: %s", body)
+	}
+	if body := feed("pod-a.example.com"); !strings.Contains(body, `url="https://media-a.example.com/sources/test/episodes/one.mp3"`) {
+		t.Fatalf("feed did not keep the default media host: %s", body)
+	}
+}

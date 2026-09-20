@@ -154,11 +154,48 @@ type StorageConfig struct {
 	MediaBucket        string `yaml:"media_bucket"`
 	ForcePathStyle     bool   `yaml:"force_path_style"`
 	PublicMediaBaseURL string `yaml:"public_media_base_url"`
-	Timeout            string `yaml:"timeout"`
+	// PublicMediaHosts maps a public site host to the media origin its listeners
+	// should receive. One deployment can answer on several public domains, and
+	// each of them can publish its audio under its own media host. A request
+	// whose host has no entry keeps PublicMediaBaseURL, so the mapping is purely
+	// additive and a single-domain deployment is unaffected.
+	// PublicMediaHosts 把公开站点域名映射到该域名的听众应使用的媒体地址。一个部署可以
+	// 在多个域名上提供服务，每个域名可以用各自的媒体主机发布音频；请求域名未命中时回退
+	// PublicMediaBaseURL，因此这张表完全是可选的，单域名部署不受影响。
+	PublicMediaHosts map[string]string `yaml:"public_media_hosts"`
+	Timeout          string            `yaml:"timeout"`
 }
 
 func (c StorageConfig) TimeoutDuration() (time.Duration, error) {
 	return optionalDuration(c.Timeout, DefaultStorageOperationTimeout)
+}
+
+// MediaBaseURL returns the media origin a request host should use. Keys are
+// normalised while loading, so this stays a plain lookup, and a host without an
+// entry falls back to the configured default.
+func (c StorageConfig) MediaBaseURL(host string) string {
+	if base, ok := c.PublicMediaHosts[normalizeHost(host)]; ok && base != "" {
+		return base
+	}
+	return strings.TrimRight(strings.TrimSpace(c.PublicMediaBaseURL), "/")
+}
+
+// normalizeHost makes a request host and a mapping key comparable: host names
+// are case insensitive, may carry a trailing dot, and a request host carries a
+// port whenever the deployment does not listen on the default one.
+func normalizeHost(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimSuffix(host, ".")
+	// A request host never carries a path, so a value that has one is a broken
+	// mapping key, such as a full URL; leave it intact for Validate to reject
+	// instead of splitting it into a host that would silently never match.
+	if strings.Contains(host, "/") {
+		return host
+	}
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		return name
+	}
+	return host
 }
 
 func optionalDuration(value string, fallback time.Duration) (time.Duration, error) {
@@ -631,6 +668,15 @@ func (c *Config) applyDefaults() {
 	if strings.TrimSpace(c.Services.Content.Jina.BaseURL) == "" {
 		c.Services.Content.Jina.BaseURL = DefaultJinaBaseURL
 	}
+	// The per-host media origins are normalised once while loading so that the
+	// request path only performs a map lookup when it rebuilds an audio URL.
+	if len(c.Runtime.Storage.PublicMediaHosts) > 0 {
+		hosts := make(map[string]string, len(c.Runtime.Storage.PublicMediaHosts))
+		for host, baseURL := range c.Runtime.Storage.PublicMediaHosts {
+			hosts[normalizeHost(host)] = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+		}
+		c.Runtime.Storage.PublicMediaHosts = hosts
+	}
 }
 
 func resolveEnvironment(node *yaml.Node) error {
@@ -712,6 +758,16 @@ func (c *Config) Validate() error {
 	}
 	if err := validateURL("runtime.storage.public_media_base_url", c.Runtime.Storage.PublicMediaBaseURL); err != nil {
 		return err
+	}
+	// A key is matched against a request host, so a scheme or a path in it would
+	// silently never match; reject it instead of ignoring the entry.
+	for host, baseURL := range c.Runtime.Storage.PublicMediaHosts {
+		if host == "" || strings.Contains(host, "/") {
+			return errors.New("runtime.storage.public_media_hosts keys must be bare host names")
+		}
+		if err := validateURL("runtime.storage.public_media_hosts "+host, baseURL); err != nil {
+			return err
+		}
 	}
 	if c.Runtime.Storage.PrivateBucket == "" || c.Runtime.Storage.MediaBucket == "" {
 		return errors.New("runtime.storage bucket names must not be empty")

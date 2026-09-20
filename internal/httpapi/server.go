@@ -439,7 +439,7 @@ func (s *Server) podcastFeed(w http.ResponseWriter, r *http.Request) {
 	maxAge, _ := time.ParseDuration(podcast.MaxAge)
 	cutoff := time.Now().Add(-maxAge)
 	rows, err := s.pool.Query(r.Context(), `
-		SELECT id, title, audio_url, audio_byte_size, published_at
+		SELECT id, title, audio_url, audio_object_key, audio_byte_size, published_at
 		FROM episodes
 		WHERE source_id = $1 AND status = 'published' AND audio_url <> '' AND hidden_at IS NULL
 		  AND published_at >= $2
@@ -454,10 +454,10 @@ func (s *Server) podcastFeed(w http.ResponseWriter, r *http.Request) {
 	items := make([]podcastItem, 0)
 	for rows.Next() {
 		var id uuid.UUID
-		var title, audioURL string
+		var title, audioURL, objectKey string
 		var byteSize int64
 		var publishedAt *time.Time
-		if err := rows.Scan(&id, &title, &audioURL, &byteSize, &publishedAt); err != nil {
+		if err := rows.Scan(&id, &title, &audioURL, &objectKey, &byteSize, &publishedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -470,7 +470,13 @@ func (s *Server) podcastFeed(w http.ResponseWriter, r *http.Request) {
 			GUID:        podcastGUID{IsPermaLink: "false", Value: id.String()},
 			PubDate:     pubDate,
 			Description: title,
-			Enclosure:   podcastEnclosure{URL: audioURL, Length: byteSize, Type: "audio/mpeg"},
+			// A feed is fetched from one public domain, so its enclosure has to
+			// use the media host of that domain rather than the stored address.
+			Enclosure: podcastEnclosure{
+				URL:    mediaAudioURL(r.Host, audioURL, objectKey, s.config.Runtime.Storage),
+				Length: byteSize,
+				Type:   "audio/mpeg",
+			},
 		})
 	}
 	if err := rows.Err(); err != nil {

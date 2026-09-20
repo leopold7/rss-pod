@@ -1065,3 +1065,88 @@ sources:
     feed: {url: http://localhost/feed.xml}
     schedule: {cron: "0 0 * * *"}
 `
+
+// One deployment can answer on several public domains, so the media origin of a
+// response is resolved from the request host rather than from one global value.
+func TestMediaBaseURLByHost(t *testing.T) {
+	data := strings.Replace(minimalConfig, "    public_media_base_url: http://localhost:9000/media",
+		`    public_media_base_url: http://localhost:9000/media
+    public_media_hosts:
+      Pod.Example.com: https://media-a.example.com/
+      pod-b.example.com: https://media-b.example.com`, 1)
+	cfg, err := Load(writeConfig(t, data))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	storage := cfg.Runtime.Storage
+	for _, test := range []struct {
+		name string
+		host string
+		want string
+	}{
+		{name: "mapped host", host: "pod.example.com", want: "https://media-a.example.com"},
+		{name: "mapping ignores case", host: "POD.EXAMPLE.COM", want: "https://media-a.example.com"},
+		{name: "mapping ignores a trailing dot", host: "pod.example.com.", want: "https://media-a.example.com"},
+		{name: "mapping ignores the port", host: "pod-b.example.com:8443", want: "https://media-b.example.com"},
+		{name: "unmapped host keeps the default", host: "other.example.com", want: "http://localhost:9000/media"},
+		{name: "empty host keeps the default", host: "", want: "http://localhost:9000/media"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := storage.MediaBaseURL(test.host); got != test.want {
+				t.Fatalf("MediaBaseURL(%q) = %q, want %q", test.host, got, test.want)
+			}
+		})
+	}
+
+	// A deployment without a mapping keeps the configured default everywhere,
+	// which is what makes the feature optional.
+	if got := (StorageConfig{PublicMediaBaseURL: "https://media.example.com/"}).MediaBaseURL("pod.example.com"); got != "https://media.example.com" {
+		t.Fatalf("default MediaBaseURL() = %q", got)
+	}
+}
+
+func TestValidatePublicMediaHosts(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		hosts   string
+		wantErr string
+	}{
+		{
+			name:  "accepts a bare host",
+			hosts: "    public_media_hosts:\n      pod.example.com: https://media.example.com",
+		},
+		{
+			name:    "rejects an empty host",
+			hosts:   "    public_media_hosts:\n      \"\": https://media.example.com",
+			wantErr: "public_media_hosts keys must be bare host names",
+		},
+		{
+			// A scheme would never match a request host, so it must not pass
+			// validation as a silently ignored entry.
+			name:    "rejects a URL as the host",
+			hosts:   "    public_media_hosts:\n      https://pod.example.com: https://media.example.com",
+			wantErr: "public_media_hosts keys must be bare host names",
+		},
+		{
+			name:    "rejects a relative media address",
+			hosts:   "    public_media_hosts:\n      pod.example.com: media.example.com",
+			wantErr: "public_media_hosts pod.example.com must be an absolute URL",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := strings.Replace(minimalConfig, "    public_media_base_url: http://localhost:9000/media",
+				"    public_media_base_url: http://localhost:9000/media\n"+test.hosts, 1)
+			_, err := Load(writeConfig(t, data))
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Load() error = %v, want containing %q", err, test.wantErr)
+			}
+		})
+	}
+}

@@ -36,6 +36,9 @@ type playerServer struct {
 	sources     []config.SourceRef
 	noticeFile  string
 	themeToggle bool
+	// storage resolves the media origin of the domain that is asking, so the
+	// player does not depend on the address stored when the episode was made.
+	storage config.StorageConfig
 }
 
 const maxNoticeBytes = 64 << 10
@@ -51,6 +54,7 @@ func newPlayerServer(cfg *config.Config, pool *pgxpool.Pool, riverClient *river.
 		sources:         cfg.EpisodeSources(),
 		noticeFile:      strings.TrimSpace(cfg.Runtime.HTTP.NoticeFile),
 		themeToggle:     cfg.Runtime.HTTP.ThemeToggleEnabled(),
+		storage:         cfg.Runtime.Storage,
 	}
 }
 
@@ -149,6 +153,24 @@ type playerEpisode struct {
 	// again. Stage is set while state is processing.
 	State string `json:"state"`
 	Stage string `json:"stage,omitempty"`
+	// objectKey locates the audio inside the media bucket. It is only used to
+	// rebuild AudioURL for the site that asked, so it is never serialised.
+	objectKey string
+}
+
+// mediaAudioURL returns the audio address the requesting site should receive.
+// A locally composed episode carries its object key, so the address is rebuilt
+// on the media origin that the request host maps to; a mirrored subscription
+// episode has no key and keeps the remote address it was published under.
+func mediaAudioURL(host, storedURL, objectKey string, storage config.StorageConfig) string {
+	if objectKey == "" {
+		return storedURL
+	}
+	base := storage.MediaBaseURL(host)
+	if base == "" {
+		return storedURL
+	}
+	return base + "/" + strings.TrimLeft(objectKey, "/")
 }
 
 // playerEpisodeState maps the internal pipeline status to the small, machine
@@ -213,7 +235,8 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 	// an episode waiting for a listener has no published_at yet, so both the
 	// window and the order fall back to the feed item's own timestamp.
 	rows, err := s.pool.Query(r.Context(), `
-		SELECT e.id, e.source_id, e.title, e.audio_url, e.audio_byte_size, e.audio_duration_seconds,
+		SELECT e.id, e.source_id, e.title, e.audio_url, e.audio_object_key,
+		       e.audio_byte_size, e.audio_duration_seconds,
 		       COALESCE(e.published_at, f.published_at), f.published_at, e.hidden_at IS NOT NULL, e.status
 		FROM episodes e
 		JOIN feed_items f ON f.id = e.feed_item_id
@@ -244,6 +267,7 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 			&episode.SourceID,
 			&episode.Title,
 			&episode.AudioURL,
+			&episode.objectKey,
 			&episode.AudioByteSize,
 			&episode.AudioDurationSeconds,
 			&episode.PublishedAt,
@@ -255,6 +279,9 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 			writeError(w, http.StatusInternalServerError, "failed to load episodes")
 			return
 		}
+		// Every public domain receives the audio address of its own media host,
+		// so a mirrored episode (which has no object key) is left untouched.
+		episode.AudioURL = mediaAudioURL(r.Host, episode.AudioURL, episode.objectKey, s.storage)
 		episode.State, episode.Stage = playerEpisodeState(status, episode.AudioURL != "")
 		episodes = append(episodes, episode)
 	}

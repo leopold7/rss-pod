@@ -78,6 +78,20 @@ runtime:
     # Audio URLs in podcast RSS must be stable; do not use short-lived signed URLs.
     # Podcast RSS 中的音频 URL 必须长期稳定，不能使用短期签名地址。
     public_media_base_url: env://PUBLIC_MEDIA_BASE_URL
+    # Optional per-host media origins. One deployment can answer on several public
+    # domains, and each domain can serve its audio from its own media host. A
+    # request whose host has no entry keeps public_media_base_url, so a
+    # single-domain deployment needs no mapping at all. Host matching ignores case
+    # and the port. Locally composed episodes are rewritten on every response, so
+    # changing this needs no database update; episodes mirrored from a
+    # subscription keep the address of the deployment they came from.
+    # 可选的按域名媒体地址。一个部署可以对外提供多个域名，每个域名都可以用各自的媒体主机
+    # 承载音频；请求域名未命中时回退 public_media_base_url，因此单域名部署完全不需要这张
+    # 表。域名匹配忽略大小写与端口。本地生成的节目在每次响应时重新拼接地址，修改这里无需
+    # 回写数据库；订阅镜像来的节目仍使用对方部署的地址。
+    # public_media_hosts:
+    #   pod.example.com: https://media-a.example.com
+    #   pod-b.example.com: https://media-b.example.com
     # Per-operation S3/MinIO timeout; the River job has a longer overall deadline.
     # 单次 S3/MinIO 上传或下载的时限；River job 使用更长的总时限。
     timeout: 2m

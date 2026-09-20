@@ -2441,6 +2441,19 @@ input:focus-visible {
   box-shadow: inset 0 0 0 1px rgb(110 168 251 / 42%), inset 0 1px 0 rgb(255 255 255 / 8%), 0 5px 14px rgb(0 0 0 / 28%);
 }
 
+/* The frame of a shared control belongs to the group in dark as well, so the
+   two halves have to stay flat here too. The dark rules above are written with
+   the root selector, which puts them level with the flattening rules near the
+   top of this file; repeating the flattening here keeps the group the only box
+   that is drawn, so a selected "all" control never shows a frame inside it. */
+:root[data-theme="dark"] .date-tabs .shared-control > .date-tab:hover,
+:root[data-theme="dark"] .source-filters .shared-control > .source-filter:hover,
+:root[data-theme="dark"] .source-filters .shared-control > .source-filter[aria-pressed="true"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 :root[data-theme="dark"] .episode-row {
   background: rgb(21 32 48 / 78%);
 }
