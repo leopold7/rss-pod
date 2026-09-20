@@ -976,27 +976,40 @@ function renderSlotStatus() {
   setStatus(displayMode === "category" ? copy.emptyCategory : copy.empty);
 }
 
-// The list is one page per header control, and every page is rebuilt together
-// so a row shows the same episode state wherever it appears.
+// The list is one page per header control, and every page is redrawn together
+// so a row shows the same episode state wherever it appears. A poll changes
+// little, though: an episode moves one stage on. So the pages, and the rows
+// inside them, are kept and only brought up to date -- replacing them tore the
+// whole list down and built it again on every tick, icons, animations and
+// painted layers included, which is what made it blink while a download ran.
 function renderEpisodeList() {
   // A finger on the list owns it for the moment: a poll that lands mid-swipe
   // would replace the page under it.
   if (slider && slider.touching) return;
-  const scrollPositions = new Map();
-  if (slider) {
-    for (const slide of slider.slides) {
-      if (slide.dataset.slot) scrollPositions.set(slide.dataset.slot, slide.scrollTop);
-    }
-  }
+  const wrapper = elements.episodeWrapper;
+  const pages = new Map();
+  for (const slide of wrapper.children) pages.set(slide.dataset.slot, slide);
 
+  // Swiper reads the pages in the order of the header controls, so the ones
+  // that stay are only moved when the chain they are in has changed.
   const slots = listSlots();
-  const fragment = document.createDocumentFragment();
-  for (const slot of slots) fragment.append(createEpisodeSlide(slot));
-  elements.episodeWrapper.replaceChildren(fragment);
-  for (const slide of elements.episodeWrapper.children) {
-    const scrollTop = scrollPositions.get(slide.dataset.slot);
-    if (scrollTop) slide.scrollTop = scrollTop;
+  let reference = wrapper.firstElementChild;
+  for (const slot of slots) {
+    const key = slotKey(slot);
+    let slide = pages.get(key);
+    if (slide) {
+      pages.delete(key);
+      // The page is already there, so it keeps the position it is scrolled to
+      // and only the rows that changed are written.
+      updateEpisodeSlide(slide, slot);
+    } else {
+      slide = createEpisodeSlide(slot);
+    }
+    if (slide === reference) reference = reference.nextElementSibling;
+    else wrapper.insertBefore(slide, reference);
   }
+  // A page the header no longer offers leaves with the slot that named it.
+  for (const slide of pages.values()) slide.remove();
 
   const index = activeSlotIndex(slots);
   if (slider) {
@@ -1004,7 +1017,7 @@ function renderEpisodeList() {
     if (index >= 0 && index !== slider.activeIndex) slider.slideTo(index, 0);
   } else if (index >= 0) {
     // The fallback keeps the page the header controls picked in front.
-    elements.episodeWrapper.children[index]?.classList.add("swiper-slide-active");
+    wrapper.children[index]?.classList.add("swiper-slide-active");
   }
   renderSlotStatus();
   updateQueueButtons();
@@ -1036,37 +1049,88 @@ function createEpisodeSlide(slot) {
   return slide;
 }
 
+// A page that is already on screen keeps its rows: the ones whose episode is
+// still listed are written afresh, the ones that arrived are added, and the
+// ones the page no longer lists are dropped.
+function updateEpisodeSlide(slide, slot) {
+  // Swiper labels a page by its position; the day and the feed read better.
+  slide.setAttribute("aria-label", slotLabel(slot));
+  renderEpisodeRows(slide.querySelector(".episode-rows"), slotEpisodes(slot), slot);
+}
+
+// Rows are matched by episode id rather than by position, so a poll only writes
+// the row it moved and every other row keeps the node -- and the icon element
+// inside it -- that it already had.
+function renderEpisodeRows(rows, episodes, slot) {
+  if (!rows) return;
+  const present = new Map();
+  for (const row of rows.children) present.set(row.dataset.episodeId, row);
+
+  let reference = rows.firstElementChild;
+  for (const episode of episodes) {
+    let row = present.get(episode.id) || null;
+    if (row) {
+      present.delete(episode.id);
+      updateEpisodeRow(row, episode, slot);
+    } else {
+      row = createEpisodeRow(episode, slot);
+    }
+    if (row === reference) reference = reference.nextElementSibling;
+    else rows.insertBefore(row, reference);
+  }
+  for (const row of present.values()) row.remove();
+}
+
 function createEpisodeRow(episode, slot = null) {
   const row = elements.rowTemplate.content.firstElementChild.cloneNode(true);
   row.dataset.episodeId = episode.id;
-  row.classList.toggle("is-current", episode.id === state.currentEpisodeID);
-  row.classList.toggle("is-playing", episode.id === state.currentEpisodeID && !elements.audio.paused);
+  // A row outlives the payload it was built from, so its actions read the
+  // episode the list shows now instead of the copy the row was built with.
+  const live = () => findEpisode(episode.id) || episode;
 
   const playButton = row.querySelector(".episode-play-button");
-  const playIcon = row.querySelector(".episode-play-button img");
-  const isPlaying = episode.id === state.currentEpisodeID && !elements.audio.paused;
-  const controlLabel = episodeControlLabel(episode, isPlaying);
-  row.classList.toggle("is-generating", episode.state === "processing");
-  row.classList.toggle("is-generation-failed", episode.state === "failed");
-  playButton.dataset.state = episode.state;
-  playButton.setAttribute("aria-label", controlLabel);
-  playButton.title = controlLabel;
-  playIcon.src =
-    episode.state === "ready" && isPlaying ? "/icons/pause.svg" : episodeControlIcon(episode);
-  playButton.addEventListener("click", () => activateEpisode(episode));
+  playButton.addEventListener("click", () => activateEpisode(live()));
 
   row.tabIndex = 0;
-  row.setAttribute("aria-label", controlLabel);
   row.addEventListener("click", (event) => {
     if (event.target.closest("button, a, input")) return;
-    activateEpisode(episode);
+    activateEpisode(live());
   });
   row.addEventListener("keydown", (event) => {
     if (event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
-    activateEpisode(episode);
+    activateEpisode(live());
   });
-  bindRowContextMenu(row, episode);
+  bindRowContextMenu(row, live);
+
+  updateEpisodeRow(row, episode, slot);
+  return row;
+}
+
+// Everything a row says about its episode. A row that stays on the page is
+// written through here, so nothing may assume this runs only once: every write
+// is guarded, and a row that did not change is not touched at all.
+function updateEpisodeRow(row, episode, slot = null) {
+  const isCurrent = episode.id === state.currentEpisodeID;
+  const isPlaying = isCurrent && !elements.audio.paused;
+  const controlLabel = episodeControlLabel(episode, isPlaying);
+
+  row.classList.toggle("is-current", isCurrent);
+  row.classList.toggle("is-playing", isPlaying);
+  row.classList.toggle("is-generating", episode.state === "processing");
+  row.classList.toggle("is-generation-failed", episode.state === "failed");
+  row.setAttribute("aria-label", controlLabel);
+
+  const playButton = row.querySelector(".episode-play-button");
+  playButton.dataset.state = episode.state;
+  playButton.setAttribute("aria-label", controlLabel);
+  playButton.title = controlLabel;
+  // A download that is still on the same stage keeps its pulse: writing the
+  // source it already has would start that animation over.
+  const icon =
+    episode.state === "ready" && isPlaying ? "/icons/pause.svg" : episodeControlIcon(episode);
+  const playIcon = playButton.querySelector("img");
+  if (playIcon.getAttribute("src") !== icon) playIcon.src = icon;
 
   // In category mode every row repeats the same feed, so that column carries
   // the publish date instead of the feed name; the saved-for-later page mixes
@@ -1074,36 +1138,74 @@ function createEpisodeRow(episode, slot = null) {
   const byDate = displayMode === "category" && !showsListenLater(slot);
   const source = row.querySelector(".episode-source");
   source.classList.toggle("is-date", byDate);
-  source.textContent = byDate ? episodeDateLabel(episode) : sourceName(episode.sourceID);
+  const sourceLabel = byDate ? episodeDateLabel(episode) : sourceName(episode.sourceID);
+  if (source.textContent !== sourceLabel) source.textContent = sourceLabel;
+
+  // The heading can also hold the admin badge, so the title is written into a
+  // text node of its own rather than replacing everything the heading holds.
   const title = row.querySelector(".episode-title");
-  title.textContent = episode.title;
-  title.title = episode.title;
+  const titleText = titleTextNode(title);
+  if (titleText.textContent !== episode.title) titleText.textContent = episode.title;
+  if (title.title !== episode.title) title.title = episode.title;
   // Dimming is a personalisation choice, so a listened title only greys out
   // once the listener asked for it.
   title.classList.toggle("is-listened", dimListened && isListened(episode.id));
 
   const time = row.querySelector(".episode-time");
   renderEpisodeDuration(time, episode.durationSeconds);
-  // Visibility only applies to published episodes, which are the playable ones.
-  if (isAdminPage && adminCSRF && isPlayable(episode)) {
-    row.classList.add("admin-episode-row");
-    const visibilityButton = document.createElement("button");
-    visibilityButton.type = "button";
-    visibilityButton.className = "admin-visibility";
-    row.classList.toggle("is-hidden", episode.hidden);
-    visibilityButton.textContent = episode.hidden ? adminCopy.restore : adminCopy.hide;
-    visibilityButton.setAttribute("aria-label", `${visibilityButton.textContent}: ${episode.title}`);
-    visibilityButton.disabled = adminBusy;
-    visibilityButton.addEventListener("click", () => setAdminVisibility(episode));
-    if (episode.hidden) {
-      const badge = document.createElement("span");
-      badge.className = "admin-hidden-badge";
-      badge.textContent = adminCopy.hidden;
-      title.prepend(badge);
-    }
-    row.append(visibilityButton);
+
+  updateRowVisibility(row, title, episode);
+}
+
+// The title carries the admin badge beside its text, so the text lives in a
+// node of its own that can be rewritten without dropping that badge.
+function titleTextNode(title) {
+  for (const node of title.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) return node;
   }
-  return row;
+  const text = document.createTextNode("");
+  title.prepend(text);
+  return text;
+}
+
+// Visibility only applies to published episodes, which are the playable ones,
+// and only on the admin page, which is the one that carries the control.
+function updateRowVisibility(row, title, episode) {
+  if (!isAdminPage) return;
+  const canHide = Boolean(adminCSRF) && isPlayable(episode);
+  row.classList.toggle("admin-episode-row", canHide);
+  if (!canHide) {
+    row.classList.remove("is-hidden");
+    row.querySelector(".admin-visibility")?.remove();
+    title.querySelector(".admin-hidden-badge")?.remove();
+    return;
+  }
+  row.classList.toggle("is-hidden", episode.hidden);
+  const button = row.querySelector(".admin-visibility") || createVisibilityButton(row, episode.id);
+  button.textContent = episode.hidden ? adminCopy.restore : adminCopy.hide;
+  button.setAttribute("aria-label", `${button.textContent}: ${episode.title}`);
+  button.disabled = adminBusy;
+  const badge = title.querySelector(".admin-hidden-badge");
+  if (episode.hidden && !badge) {
+    const next = document.createElement("span");
+    next.className = "admin-hidden-badge";
+    next.textContent = adminCopy.hidden;
+    title.prepend(next);
+  } else if (!episode.hidden && badge) {
+    badge.remove();
+  }
+}
+
+function createVisibilityButton(row, episodeID) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "admin-visibility";
+  button.addEventListener("click", () => {
+    const live = findEpisode(episodeID);
+    if (live) setAdminVisibility(live);
+  });
+  row.append(button);
+  return button;
 }
 
 // The row control plays a ready episode, starts a download for one that is
@@ -1526,16 +1628,20 @@ function normalizeEpisode(episode) {
   };
 }
 
+// A row is written on every poll, so the cell is only touched when the value it
+// shows has actually changed: writing the same text would replace the node it
+// sits in and repaint the row for nothing.
 function renderEpisodeDuration(element, durationSeconds) {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    element.textContent = "--:--";
+    if (element.textContent !== "--:--") element.textContent = "--:--";
     element.removeAttribute("datetime");
     element.setAttribute("aria-label", copy.durationUnavailable);
     return;
   }
-  element.textContent = formatTotalDuration(durationSeconds);
+  const label = formatTotalDuration(durationSeconds);
+  if (element.textContent !== label) element.textContent = label;
   element.dateTime = `PT${Math.round(durationSeconds)}S`;
-  element.setAttribute("aria-label", copy.durationLabel(element.textContent));
+  element.setAttribute("aria-label", copy.durationLabel(label));
 }
 
 // Only the page in front scrolls: the episode that is playing sits on it, and a
@@ -2354,8 +2460,10 @@ function closePopupMenu({ focusAnchor = false } = {}) {
 // ---- Row actions: long press and right click ----
 
 // A press that is held on a row opens the same actions a right click does, so a
-// phone can start a download, save an entry for later, or drop it again.
-function bindRowContextMenu(row, episode) {
+// phone can start a download, save an entry for later, or drop it again. The
+// row passes a reader rather than the episode itself, because the row outlives
+// the payload it was built from.
+function bindRowContextMenu(row, currentEpisode) {
   let timer = 0;
   let pressed = false;
   let startX = 0;
@@ -2376,7 +2484,7 @@ function bindRowContextMenu(row, episode) {
       pressed = false;
       suppressEpisodeClick();
       navigator.vibrate?.(12);
-      openEpisodeMenu(episode, { x: startX, y: startY, anchor: row });
+      openEpisodeMenu(currentEpisode(), { x: startX, y: startY, anchor: row });
     }, LONG_PRESS_MS);
   });
   row.addEventListener("pointermove", (event) => {
@@ -2394,7 +2502,7 @@ function bindRowContextMenu(row, episode) {
     event.preventDefault();
     cancel();
     suppressEpisodeClick();
-    openEpisodeMenu(episode, { x: event.clientX, y: event.clientY, anchor: row });
+    openEpisodeMenu(currentEpisode(), { x: event.clientX, y: event.clientY, anchor: row });
   });
 }
 
