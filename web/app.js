@@ -149,7 +149,7 @@ const copy = {
     removeListenLater: "Remove from Listen later",
     laterAdded: "Saved for later",
     laterUnavailable: "This one cannot be started here",
-    playbackSkipped: "Could not play that episode",
+    playbackFailed: "Could not play that episode. Playback paused.",
     menuDownload: "Download",
     menuRetry: "Download again",
     openEpisodeActions: (title) => `Actions for ${title}`,
@@ -236,7 +236,7 @@ const copy = {
     removeListenLater: "取消稍后在听",
     laterAdded: "已加入稍后在听",
     laterUnavailable: "该条目无法在这里开始下载",
-    playbackSkipped: "这一条无法播放，已跳过",
+    playbackFailed: "这一条无法播放，已暂停",
     menuDownload: "下载",
     menuRetry: "重新下载",
     openEpisodeActions: (title) => `${title} 的操作`,
@@ -1227,9 +1227,9 @@ function activateEpisode(episode) {
 async function toggleEpisode(episode) {
   if (state.currentEpisodeID === episode.id) {
     if (elements.audio.paused) {
-      await safePlay();
+      await requestPlayback();
     } else {
-      elements.audio.pause();
+      pausePlayback();
     }
     return;
   }
@@ -1356,6 +1356,8 @@ function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
   // listener, which is when the saved list may let go of it.
   const previousEpisodeID = state.currentEpisodeID;
   state.currentEpisodeID = episode.id;
+  // A selection that is not meant to play leaves the dock stopped on purpose.
+  playingIntent = Boolean(autoplay);
   if (previousEpisodeID && previousEpisodeID !== episode.id) {
     releaseListenedFromListenLater(previousEpisodeID);
   }
@@ -1390,31 +1392,69 @@ function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
   if (autoplay) safePlay();
 }
 
-async function safePlay() {
+// The element is asked to play and its answer is reported: a request that is
+// refused - the browser's autoplay rule, a source it cannot use - is a failure
+// like a stall. A request a newer source interrupted is the exception, because
+// the selection or the retry behind it already asks again.
+async function safePlay(episodeID = state.currentEpisodeID) {
+  playingIntent = true;
+  playRequestedAt = Date.now();
   try {
     await elements.audio.play();
   } catch (error) {
     if (!isDemoMode()) console.error("play audio", error);
+    if (error?.name === "AbortError") return;
+    if (episodeID && episodeID === state.currentEpisodeID) handlePlaybackFailure();
   }
+}
+
+// A listener who asks for audio again gets a full set of attempts back; the
+// retries the player spends on its own belong to one run of one episode.
+function requestPlayback() {
+  playFailures = 0;
+  return safePlay();
+}
+
+// The one place that stops playback on purpose, so a pause the listener or the
+// lock screen asked for is never mistaken for a failure and retried.
+function pausePlayback() {
+  playingIntent = false;
+  elements.audio.pause();
 }
 
 // An episode that never starts is the one failure a listener cannot see: the
 // screen is off, the row still says it is playing, and the element waits for
-// bytes that never arrive. The watch gives the host a second chance and then
-// lets the queue move on, so a dead source cannot park playback for the rest of
-// the trip.
+// bytes that never arrive. Every failure gets the same answer - the source is
+// asked for again - and the attempts are spent one at a time. When they run out
+// the player stops on the episode it could not play instead of moving on, so
+// nothing leaves the queue or the saved list behind the listener's back.
 const STALL_TIMEOUT_MS = 20_000;
 // Playing audio moves at least this far in that window; waiting audio does not.
 const STALL_PROGRESS_SECONDS = 1;
-// A network that fails from end to end must not be walked through in one go.
-const AUTO_SKIP_WINDOW_MS = 60_000;
-const AUTO_SKIP_LIMIT = 3;
+// The first try, followed by three retries.
+const PLAY_RETRY_LIMIT = 3;
+// The attempts are only given back once the episode is properly under way: a
+// source that dies right after every restart must not be retried for ever.
+const PLAY_RETRY_PROGRESS_SECONDS = 5;
+// A pause the episode change leaves behind settles after the event, so the
+// element is given a moment to start before its state is taken at face value.
+const PAUSE_RECOVERY_MS = 1_200;
+// Only a start that was just asked for is read that way; later on a pause
+// belongs to the listener and the player leaves it alone.
+const PAUSE_RECOVERY_WINDOW_MS = 5_000;
 
 let stallTimer = 0;
 let stallMarkTime = 0;
-let stallRetriedID = "";
-let autoSkips = 0;
-let lastAutoSkipAt = 0;
+// What playback should be doing according to the player: the queue and the
+// listener's own controls set it, which tells a pause nobody asked for apart
+// from a deliberate one.
+let playingIntent = false;
+let playRequestedAt = 0;
+// The attempt budget belongs to one episode: a new selection starts a fresh
+// count, and so does a listener who asks for the same episode again.
+let playFailureID = "";
+let playFailures = 0;
+let playFailureSeconds = 0;
 
 function armStallWatchdog() {
   window.clearTimeout(stallTimer);
@@ -1437,18 +1477,32 @@ function checkStalledPlayback() {
     armStallWatchdog();
     return;
   }
-  if (stallRetriedID !== episodeID) {
-    stallRetriedID = episodeID;
-    retryStalledPlayback();
+  handlePlaybackFailure();
+}
+
+// A stall, an error, a play() that was refused, a pause nobody asked for: they
+// all spend one attempt and get the same retry. When the attempts are gone the
+// player stops where it is, and the toast says why.
+function handlePlaybackFailure() {
+  const episodeID = state.currentEpisodeID;
+  if (!episodeID) return;
+  if (playFailureID !== episodeID) {
+    playFailureID = episodeID;
+    playFailures = 0;
+  }
+  playFailures += 1;
+  playFailureSeconds = elements.audio.currentTime || 0;
+  clearStallWatchdog();
+  if (playFailures <= PLAY_RETRY_LIMIT) {
+    retryPlayback(episodeID);
     return;
   }
-  skipUnplayableEpisode();
+  stopUnplayableEpisode(episodeID);
 }
 
 // Asking for the same source again does not mean starting the episode over.
-function retryStalledPlayback() {
+function retryPlayback(episodeID) {
   const resumeAt = elements.audio.currentTime || 0;
-  const episodeID = state.currentEpisodeID;
   elements.audio.load();
   if (resumeAt > 0) {
     elements.audio.addEventListener(
@@ -1460,34 +1514,52 @@ function retryStalledPlayback() {
       { once: true },
     );
   }
-  safePlay();
+  safePlay(episodeID);
 }
 
-// An episode that will not play is left behind instead of leaving the listener
-// in silence. The limit stops a broken network from flicking through the whole
-// list in a minute, and the toast says why the episode changed.
-function skipUnplayableEpisode() {
-  if (!state.currentEpisodeID) return;
-  const now = Date.now();
-  autoSkips = now - lastAutoSkipAt < AUTO_SKIP_WINDOW_MS ? autoSkips + 1 : 1;
-  lastAutoSkipAt = now;
-  stallRetriedID = "";
+// The attempts are paid back as the episode gets going, so a source that keeps
+// failing right after a restart is not retried for ever.
+function notePlaybackProgress() {
+  if (playFailureID !== state.currentEpisodeID) return;
+  if ((elements.audio.currentTime || 0) <= playFailureSeconds + PLAY_RETRY_PROGRESS_SECONDS) return;
+  playFailures = 0;
+}
+
+// A pause the player did not ask for, right after the queue moved on or a retry
+// started, is what an interrupted play() or a dropped source looks like: the
+// dock reports stopped and the listener is given no reason. It is handled as a
+// failure, because the attempts are what decides between another try and a
+// deliberate stop.
+function recoverUnexpectedPause(episodeID) {
+  window.setTimeout(() => {
+    if (episodeID !== state.currentEpisodeID) return;
+    if (!playingIntent || !elements.audio.paused) return;
+    if (elements.audio.ended || elements.audio.error) return;
+    if (Date.now() - playRequestedAt > PAUSE_RECOVERY_WINDOW_MS) return;
+    handlePlaybackFailure();
+  }, PAUSE_RECOVERY_MS);
+}
+
+// Giving up is a pause, not a jump: skipping the episode would take it out of
+// the saved list as well, and the listener would have to find it again by hand.
+function stopUnplayableEpisode(episodeID) {
   clearStallWatchdog();
-  showToast(copy.playbackSkipped);
-  if (autoSkips > AUTO_SKIP_LIMIT) return;
-  const next = queueNeighbour(1);
-  if (next) selectEpisode(next, { autoplay: true });
+  pausePlayback();
+  // The episode that never played is not a listened one, so the saved list keeps
+  // it for the next attempt.
+  unmarkEpisodeListened(episodeID);
+  showToast(copy.playbackFailed);
+  renderPlaybackState();
 }
 
 function bindPlayerEvents() {
   elements.playToggle.addEventListener("click", () => {
-    if (elements.audio.paused) safePlay();
-    else elements.audio.pause();
+    if (elements.audio.paused) requestPlayback();
+    else pausePlayback();
   });
   elements.previousButton.addEventListener("click", () => moveInQueue(-1));
   elements.nextButton.addEventListener("click", () => moveInQueue(1));
   elements.audio.addEventListener("play", renderPlaybackState);
-  elements.audio.addEventListener("pause", renderPlaybackState);
   elements.audio.addEventListener("play", () => {
     markEpisodeListened(state.currentEpisodeID);
     // Playing an episode is the moment to pull the next one down for the rest
@@ -1496,12 +1568,16 @@ function bindPlayerEvents() {
     // With the screen off nothing else reports that this episode never started.
     armStallWatchdog();
   });
-  elements.audio.addEventListener("pause", clearStallWatchdog);
+  elements.audio.addEventListener("pause", () => {
+    clearStallWatchdog();
+    renderPlaybackState();
+    recoverUnexpectedPause(state.currentEpisodeID);
+  });
   elements.audio.addEventListener("waiting", armStallWatchdog);
   // A source that cannot be fetched or decoded is a playback failure whether or
   // not the listener can see the screen.
   elements.audio.addEventListener("error", () => {
-    if (elements.audio.error) skipUnplayableEpisode();
+    if (elements.audio.error) handlePlaybackFailure();
   });
   elements.audio.addEventListener("ended", () => {
     clearStallWatchdog();
@@ -1512,7 +1588,11 @@ function bindPlayerEvents() {
     // An episode that played through is done with, even when it was the last
     // one in the queue and nothing follows it.
     releaseListenedFromListenLater(state.currentEpisodeID);
-    if (next) selectEpisode(next, { autoplay: true });
+    if (next) {
+      selectEpisode(next, { autoplay: true });
+      return;
+    }
+    playingIntent = false;
   });
   elements.audio.addEventListener("loadedmetadata", () => {
     applyPlaybackRate();
@@ -1527,6 +1607,7 @@ function bindPlayerEvents() {
     updateProgress();
     updateMediaSessionPosition();
     persistResumeState();
+    notePlaybackProgress();
   });
   elements.audio.addEventListener("seeked", updateMediaSessionPosition);
   elements.audio.addEventListener("ratechange", updateMediaSessionPosition);
@@ -2332,6 +2413,15 @@ function markEpisodeListened(id) {
   if (dimListened) renderAll();
 }
 
+// An episode that could not be played is not a listened one: dropping the mark
+// keeps the saved list from letting go of it once the listener moves on.
+function unmarkEpisodeListened(id) {
+  if (!id || !listened[id]) return;
+  delete listened[id];
+  writeListenedRecords(listened);
+  if (dimListened) renderAll();
+}
+
 // The saved list releases an episode the listener has left: it played through,
 // or they moved on to something else. Only an episode that was actually played
 // counts, so a saved one that is merely tapped through stays.
@@ -2892,8 +2982,8 @@ function registerMediaSessionActions() {
   const mediaSession = getMediaSession();
   if (!mediaSession || typeof mediaSession.setActionHandler !== "function") return;
   const handlers = {
-    play: () => safePlay(),
-    pause: () => elements.audio.pause(),
+    play: () => requestPlayback(),
+    pause: () => pausePlayback(),
     previoustrack: () => moveInQueue(-1),
     nexttrack: () => moveInQueue(1),
     seekbackward: (details) => seekBy(-(details.seekOffset || DEFAULT_SEEK_OFFSET)),
@@ -3119,7 +3209,7 @@ function setAdminPlayerVisible(visible) {
 function showAdminLogin(message = "") {
   adminCSRF = "";
   window.clearInterval(adminSessionTimer);
-  elements.audio.pause();
+  pausePlayback();
   setAdminPlayerVisible(false);
   adminMessage(message);
   document.querySelector("#admin-code").focus();
