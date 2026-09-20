@@ -141,6 +141,7 @@ func newRiverClient(cfg *config.Config, pool *pgxpool.Pool, queueNames []string)
 	cleanupDataWorker := &jobs.CleanupDataWorker{Pool: pool}
 	scheduleSourcesWorker := &jobs.ScheduleSourcesWorker{Pool: pool, Config: cfg}
 	pollSourceWorker := &jobs.PollSourceWorker{Pool: pool, Config: cfg}
+	pollSubscriptionWorker := &jobs.PollSubscriptionWorker{Pool: pool, Config: cfg}
 	resolveContentWorker := &jobs.ResolveContentWorker{Pool: pool, Config: cfg}
 	generateScriptWorker := &jobs.GenerateScriptWorker{Pool: pool, Config: cfg}
 	generateTTSWorker := &jobs.GenerateTTSWorker{Pool: pool, Config: cfg, Storage: storageClient}
@@ -148,6 +149,7 @@ func newRiverClient(cfg *config.Config, pool *pgxpool.Pool, queueNames []string)
 	river.AddWorker(workers, cleanupDataWorker)
 	river.AddWorker(workers, scheduleSourcesWorker)
 	river.AddWorker(workers, pollSourceWorker)
+	river.AddWorker(workers, pollSubscriptionWorker)
 	river.AddWorker(workers, resolveContentWorker)
 	river.AddWorker(workers, generateScriptWorker)
 	river.AddWorker(workers, generateTTSWorker)

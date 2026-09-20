@@ -129,9 +129,9 @@ func runCombined(ctx context.Context, args []string) error {
 func runPoll(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("poll", flag.ContinueOnError)
 	configPath := flags.String("config", "config.yaml", "configuration file")
-	sourcesValue := flags.String("sources", "", "comma-separated source IDs, or all")
-	times := flags.Int("times", 1, "number of polls to enqueue per source")
-	limit := flags.Int("limit", 0, "maximum feed items per poll; zero uses each source configuration")
+	sourcesValue := flags.String("sources", "", "comma-separated source or subscription IDs, or all")
+	times := flags.Int("times", 1, "number of polls to enqueue per target")
+	limit := flags.Int("limit", 0, "maximum items per poll; zero uses each target configuration")
 	jsonOutput := flags.Bool("json", false, "print JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -140,11 +140,11 @@ func runPoll(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	sources, err := app.ParsePollSources(cfg, *sourcesValue)
+	targets, err := app.ParsePollTargets(cfg, *sourcesValue)
 	if err != nil {
 		return err
 	}
-	queued, err := app.EnqueuePolls(ctx, cfg, sources, *times, *limit)
+	queued, err := app.EnqueuePolls(ctx, cfg, targets, *times, *limit)
 	if err != nil {
 		return err
 	}
@@ -154,7 +154,7 @@ func runPoll(ctx context.Context, args []string) error {
 		return encoder.Encode(queued)
 	}
 	for _, poll := range queued {
-		fmt.Printf("queued source=%s number=%d run_id=%s job_id=%d\n", poll.SourceID, poll.Number, poll.RunID, poll.JobID)
+		fmt.Printf("queued target=%s number=%d run_id=%s job_id=%d\n", poll.SourceID, poll.Number, poll.RunID, poll.JobID)
 	}
 	return nil
 }

@@ -21,6 +21,84 @@ type QueuedPoll struct {
 	JobID    int64     `json:"job_id"`
 }
 
+// PollTarget names one explicitly polled owner of episodes. A subscription
+// mirrors another rss-pod deployment instead of reading a feed, so it is
+// queued as a different job.
+type PollTarget struct {
+	ID           string
+	Subscription bool
+}
+
+// ParsePollTargets resolves --sources for the poll command. It accepts feed
+// sources and mirror subscriptions, because both are polled by ID.
+func ParsePollTargets(cfg *config.Config, value string) ([]PollTarget, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, fmt.Errorf("--sources is required")
+	}
+	if value == "all" {
+		targets := make([]PollTarget, 0, len(cfg.Sources)+len(cfg.Subscriptions))
+		for _, source := range cfg.Sources {
+			if source.Enabled {
+				targets = append(targets, PollTarget{ID: source.ID})
+			}
+		}
+		for _, subscription := range cfg.Subscriptions {
+			if subscription.Enabled {
+				targets = append(targets, PollTarget{ID: subscription.ID, Subscription: true})
+			}
+		}
+		if len(targets) == 0 {
+			return nil, fmt.Errorf("configuration has no enabled sources or subscriptions")
+		}
+		return targets, nil
+	}
+
+	seen := make(map[string]struct{})
+	targets := make([]PollTarget, 0)
+	for _, id := range strings.Split(value, ",") {
+		id = strings.TrimSpace(id)
+		if id == "all" {
+			return nil, fmt.Errorf("%q cannot be combined with other IDs", id)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		if source, ok := cfg.Source(id); ok {
+			if !source.Enabled {
+				return nil, fmt.Errorf("source %q is disabled", id)
+			}
+			seen[id] = struct{}{}
+			targets = append(targets, PollTarget{ID: id})
+			continue
+		}
+		if subscription, ok := cfg.Subscription(id); ok {
+			if !subscription.Enabled {
+				return nil, fmt.Errorf("subscription %q is disabled", id)
+			}
+			seen[id] = struct{}{}
+			targets = append(targets, PollTarget{ID: id, Subscription: true})
+			continue
+		}
+		return nil, fmt.Errorf("unknown source or subscription %q", id)
+	}
+	return targets, nil
+}
+
+// MaxLimit is the largest page a manual poll may request for this target.
+func (t PollTarget) MaxLimit(cfg *config.Config) int {
+	if t.Subscription {
+		if subscription, ok := cfg.Subscription(t.ID); ok {
+			return subscription.EffectiveLimit()
+		}
+		return config.DefaultSubscriptionLimit
+	}
+	if source, ok := cfg.Source(t.ID); ok {
+		return cfg.EffectiveLimits(source).MaxFeedItemsPerRun
+	}
+	return 0
+}
+
 func ParsePollSources(cfg *config.Config, value string) ([]config.SourceConfig, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -65,12 +143,12 @@ func ParsePollSources(cfg *config.Config, value string) ([]config.SourceConfig, 
 func EnqueuePolls(
 	ctx context.Context,
 	cfg *config.Config,
-	sources []config.SourceConfig,
+	targets []PollTarget,
 	times int,
 	limit int,
 ) ([]QueuedPoll, error) {
-	if len(sources) == 0 {
-		return nil, fmt.Errorf("at least one source is required")
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("at least one target is required")
 	}
 	if times < 1 || times > MaxManualPollTimes {
 		return nil, fmt.Errorf("times must be between 1 and %d", MaxManualPollTimes)
@@ -78,10 +156,9 @@ func EnqueuePolls(
 	if limit < 0 {
 		return nil, fmt.Errorf("limit must be zero or positive")
 	}
-	for _, source := range sources {
-		maxLimit := cfg.EffectiveLimits(source).MaxFeedItemsPerRun
-		if limit > maxLimit {
-			return nil, fmt.Errorf("limit for source %q must be between 1 and %d, or zero to use the configured maximum", source.ID, maxLimit)
+	for _, target := range targets {
+		if maxLimit := target.MaxLimit(cfg); limit > maxLimit {
+			return nil, fmt.Errorf("limit for %q must be between 1 and %d, or zero to use the configured maximum", target.ID, maxLimit)
 		}
 	}
 
@@ -100,12 +177,17 @@ func EnqueuePolls(
 	}
 	defer tx.Rollback(ctx)
 
-	queued := make([]QueuedPoll, 0, len(sources)*times)
-	for _, source := range sources {
+	queued := make([]QueuedPoll, 0, len(targets)*times)
+	for _, target := range targets {
 		for number := 1; number <= times; number++ {
-			result, err := jobs.EnqueuePoll(ctx, tx, client, source.ID, limit)
+			var result jobs.EnqueuedPoll
+			if target.Subscription {
+				result, err = jobs.EnqueueSubscriptionPoll(ctx, tx, client, target.ID, limit)
+			} else {
+				result, err = jobs.EnqueuePoll(ctx, tx, client, target.ID, limit)
+			}
 			if err != nil {
-				return nil, fmt.Errorf("source %s poll %d: %w", source.ID, number, err)
+				return nil, fmt.Errorf("target %s poll %d: %w", target.ID, number, err)
 			}
 			queued = append(queued, QueuedPoll{
 				SourceID: result.SourceID,

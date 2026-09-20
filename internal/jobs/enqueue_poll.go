@@ -38,3 +38,28 @@ func EnqueuePoll(
 	}
 	return EnqueuedPoll{SourceID: sourceID, RunID: runID, JobID: inserted.Job.ID}, nil
 }
+
+// EnqueueSubscriptionPoll queues one mirror pull of another rss-pod deployment.
+func EnqueueSubscriptionPoll(
+	ctx context.Context,
+	tx pgx.Tx,
+	client *river.Client[pgx.Tx],
+	subscriptionID string,
+	limit int,
+) (EnqueuedPoll, error) {
+	runID := uuid.New()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO source_runs (id, source_id, status) VALUES ($1, $2, 'queued')
+	`, runID, subscriptionID); err != nil {
+		return EnqueuedPoll{}, fmt.Errorf("create subscription run: %w", err)
+	}
+	inserted, err := client.InsertTx(ctx, tx, PollSubscriptionArgs{
+		SubscriptionID: subscriptionID,
+		RunID:          runID.String(),
+		Limit:          limit,
+	}, nil)
+	if err != nil {
+		return EnqueuedPoll{}, fmt.Errorf("enqueue subscription poll: %w", err)
+	}
+	return EnqueuedPoll{SourceID: subscriptionID, RunID: runID, JobID: inserted.Job.ID}, nil
+}

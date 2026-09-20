@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,18 @@ func TestLoadCurrentConfig(t *testing.T) {
 	if ids := cfg.PollOnlySourceIDs(); len(ids) != 0 {
 		t.Fatalf("poll-only sources = %v, want none", ids)
 	}
+	// Mirroring calls another deployment, so the example keeps it disabled and
+	// must not add it to the player's source filter.
+	peer, ok := cfg.Subscription("peer-podcast")
+	if !ok || peer.Enabled || peer.BaseURL == "" || peer.Schedule.Cron != "0 8 * * *" {
+		t.Fatalf("example subscription = %#v", peer)
+	}
+	if got := cfg.EnabledSubscriptions(); len(got) != 0 {
+		t.Fatalf("enabled subscriptions = %#v, want none", got)
+	}
+	if got := cfg.EpisodeSources(); len(got) != 0 {
+		t.Fatalf("episode sources = %#v, want none", got)
+	}
 }
 
 func TestLoadSourcePollOnly(t *testing.T) {
@@ -139,6 +152,169 @@ func TestPollOnlySourceIDsSkipsDisabledSources(t *testing.T) {
 		t.Fatalf("PollOnlySourceIDs() = %v, want [discover-only]", ids)
 	}
 }
+
+func TestLoadSubscriptions(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig+subscriptionFixture))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Subscriptions) != 1 {
+		t.Fatalf("subscriptions = %#v", cfg.Subscriptions)
+	}
+	subscription := cfg.Subscriptions[0]
+	if subscription.ID != "peer" || subscription.Name != "朋友的播客" || !subscription.Enabled ||
+		subscription.BaseURL != "https://pod.example.com/" || subscription.SourceID != "zhihu-daily" {
+		t.Fatalf("subscription = %#v", subscription)
+	}
+	if got := subscription.EffectiveLimit(); got != 500 {
+		t.Fatalf("EffectiveLimit() = %d, want 500", got)
+	}
+	if got, err := subscription.LookbackDuration(); err != nil || got != 48*time.Hour {
+		t.Fatalf("LookbackDuration() = %s, %v", got, err)
+	}
+
+	loaded, ok := cfg.Subscription("peer")
+	if !ok || loaded.ID != subscription.ID {
+		t.Fatalf("Subscription(peer) = %#v, %v", loaded, ok)
+	}
+	if _, ok := cfg.Subscription("missing"); ok {
+		t.Fatal("Subscription(missing) unexpectedly succeeded")
+	}
+	if got := cfg.EnabledSubscriptions(); len(got) != 1 || got[0].ID != "peer" {
+		t.Fatalf("EnabledSubscriptions() = %#v", got)
+	}
+	if got := cfg.EpisodeSources(); len(got) != 2 || got[0].ID != "test" || got[1].ID != "peer" || got[1].Name != "朋友的播客" {
+		t.Fatalf("EpisodeSources() = %#v", got)
+	}
+	if name, ok := cfg.EpisodeSourceName("peer"); !ok || name != "朋友的播客" {
+		t.Fatalf("EpisodeSourceName(peer) = %q, %v", name, ok)
+	}
+	if name, ok := cfg.EpisodeSourceName("test"); !ok || name != "Test" {
+		t.Fatalf("EpisodeSourceName(test) = %q, %v", name, ok)
+	}
+	if _, ok := cfg.EpisodeSourceName("missing"); ok {
+		t.Fatal("EpisodeSourceName(missing) unexpectedly succeeded")
+	}
+}
+
+func TestSubscriptionEpisodesURL(t *testing.T) {
+	subscription := SubscriptionConfig{
+		BaseURL:  " https://pod.example.com/ ",
+		SourceID: " zhihu-daily ",
+		Limit:    500,
+	}
+	if got := subscription.EpisodesEndpoint(); got != "https://pod.example.com/api/v1/player/episodes" {
+		t.Fatalf("EpisodesEndpoint() = %q", got)
+	}
+	since := time.Date(2026, time.September, 17, 16, 0, 0, 0, time.UTC)
+	before := time.Date(2026, time.September, 20, 16, 0, 0, 0, time.UTC)
+	want := "https://pod.example.com/api/v1/player/episodes" +
+		"?before=2026-09-20T16%3A00%3A00.000Z&limit=500&since=2026-09-17T16%3A00%3A00.000Z&source_id=zhihu-daily"
+	if got := subscription.EpisodesURL(since, before, subscription.EffectiveLimit()); got != want {
+		t.Fatalf("EpisodesURL() = %q, want %q", got, want)
+	}
+
+	// Without a remote source the pull covers every source of that deployment.
+	subscription.SourceID = ""
+	subscription.Limit = 0
+	got := subscription.EpisodesURL(since, before, subscription.EffectiveLimit())
+	if strings.Contains(got, "source_id") || !strings.Contains(got, "limit="+strconv.Itoa(DefaultSubscriptionLimit)) {
+		t.Fatalf("EpisodesURL() = %q", got)
+	}
+}
+
+func TestValidateSubscriptions(t *testing.T) {
+	valid, err := Load(writeConfig(t, minimalConfig+subscriptionFixture))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid subscriptions rejected: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{
+			name:    "collides with a source ID",
+			mutate:  func(c *Config) { c.Subscriptions[0].ID = "test" },
+			wantErr: "already used by a source",
+		},
+		{
+			name: "duplicate subscription ID",
+			mutate: func(c *Config) {
+				c.Subscriptions = append(c.Subscriptions, c.Subscriptions[0])
+			},
+			wantErr: "duplicate subscription id",
+		},
+		{
+			name:    "missing name",
+			mutate:  func(c *Config) { c.Subscriptions[0].Name = "" },
+			wantErr: "id and name must not be empty",
+		},
+		{
+			name:    "relative base URL",
+			mutate:  func(c *Config) { c.Subscriptions[0].BaseURL = "pod.example.com" },
+			wantErr: "absolute URL",
+		},
+		{
+			name:    "invalid cron",
+			mutate:  func(c *Config) { c.Subscriptions[0].Schedule.Cron = "every morning" },
+			wantErr: "schedule.cron",
+		},
+		{
+			name:    "invalid lookback",
+			mutate:  func(c *Config) { c.Subscriptions[0].Lookback = "0s" },
+			wantErr: "positive duration",
+		},
+		{
+			name:    "limit above the remote maximum",
+			mutate:  func(c *Config) { c.Subscriptions[0].Limit = MaxSubscriptionLimit + 1 },
+			wantErr: "limit must be between",
+		},
+		{
+			name:    "negative limit",
+			mutate:  func(c *Config) { c.Subscriptions[0].Limit = -1 },
+			wantErr: "limit must be between",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := *valid
+			invalid.Subscriptions = append([]SubscriptionConfig(nil), valid.Subscriptions...)
+			test.mutate(&invalid)
+			err := invalid.Validate()
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Validate() error = %v, want containing %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func writeConfig(t *testing.T, data string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// subscriptionFixture is appended to minimalConfig, which already declares the
+// source "test" that the ID collision case reuses.
+const subscriptionFixture = `
+subscriptions:
+  - id: peer
+    name: 朋友的播客
+    enabled: true
+    base_url: https://pod.example.com/
+    source_id: zhihu-daily
+    schedule: {cron: "0 8 * * *"}
+    lookback: 48h
+    limit: 500
+`
 
 func TestLoadDoesNotInterpolateEnvironmentIntoYAML(t *testing.T) {
 	t.Setenv("TEST_PASSWORD", "colon: # still a scalar")

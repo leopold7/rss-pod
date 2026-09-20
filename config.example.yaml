@@ -332,3 +332,40 @@ sources:
 
     llm:
       - deepseek
+
+# A subscription mirrors another rss-pod deployment. It reads no feed: on its
+# own schedule it pulls that deployment's public player API for the episodes it
+# published since the previous run, and republishes what it finds, so this
+# deployment's player and podcast RSS carry someone else's podcast as well.
+# The remote audio is referenced by URL; nothing is copied or regenerated here,
+# and a mirrored episode is playable the moment it appears.
+# 订阅用于镜像另一个 rss-pod 部署。它不读取 RSS，而是按自己的计划定时拉取对方的公开
+# 播放器接口，取回对方自上次运行以来发布的节目并转载到本站，使本站播放器与播客 RSS
+# 也能收录别人的播客。远端音频按 URL 直接引用，不复制、也不在本地重新生成，被镜像的
+# 节目一入库即可播放。
+# id becomes the source_id of the mirrored episodes and the name shown in the
+# player filter, so it must not repeat a source id.
+# id 会成为被镜像条目的 source_id 和播放器筛选项名称，因此不能与 source id 重复。
+# Pulling a remote deployment is an external call, so the example stays disabled.
+# 拉取远端部署属于外部调用，因此示例默认关闭。
+subscriptions:
+  - id: peer-podcast
+    name: 朋友的播客
+    enabled: false
+    # Origin of the other deployment; the API path is appended automatically.
+    # 对方部署的站点地址，接口路径会自动拼接。
+    base_url: https://pod.example.com
+    # One source of that deployment; leave empty to mirror everything it serves.
+    # 指定对方部署中的某个来源；留空表示镜像对方提供的全部来源。
+    source_id: ""
+    # The pull window ends at the run time and starts where the previous
+    # successful run ended, so each run continues from the last one.
+    # 拉取窗口结束于本次运行时刻，开始于上一次成功运行结束的位置，因此每轮都能接上。
+    schedule:
+      cron: "0 8 * * *"
+    # Window of the first pull, used until a run completes successfully.
+    # 首次拉取的时间窗，直到有一次成功运行为止。
+    lookback: 72h
+    # Page size requested from the remote endpoint; the remote maximum is 500.
+    # 向远端接口请求的分页大小，对方上限为 500。
+    limit: 200

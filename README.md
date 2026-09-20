@@ -254,13 +254,53 @@ The default keeps the automatic pipeline. Because the player only shows the last
 three days, waiting entries older than that are started with
 `rss-pod start --sources all`.
 
+### Subscriptions
+
+A subscription mirrors another rss-pod deployment. It reads no feed: on its own
+schedule it pulls that deployment's public player API for the episodes published
+since the previous run and republishes them here, so this deployment's player,
+source filter, and podcast RSS carry someone else's podcast as well:
+
+```yaml
+subscriptions:
+  - id: peer-podcast
+    name: 朋友的播客
+    enabled: true
+    # Origin of the other deployment; the API path is appended automatically.
+    base_url: https://pod.example.com
+    # One source of that deployment; empty mirrors every source it serves.
+    source_id: zhihu-daily
+    # Pull window: ends at the run time, starts where the previous run ended.
+    schedule:
+      cron: "0 8 * * *"
+    lookback: 72h
+    limit: 200
+```
+
+The first pull covers `lookback`; every later pull continues from the last
+successful run with a one hour overlap, so a run only repeats the tail of the
+previous window. `id` becomes the `source_id` of the mirrored episodes and the
+name the player filter shows, it cannot repeat a source id, and `check` pulls
+one page from every enabled subscription to report a broken remote origin.
+
+Mirroring references the remote audio URL instead of copying it: nothing is
+downloaded, no generation runs locally, and a mirrored episode is playable as
+soon as it appears. A mirrored entry keeps the article date of the remote
+episode, so the date layout groups it on the day that article belongs to. Only
+remote episodes that already carry audio are mirrored; entries the other
+deployment has not finished generating are picked up by a later pull. Because
+the audio lives on the other deployment, that deployment stays in charge of it:
+deleting the remote object or hiding the remote episode does not remove an
+already mirrored copy here, and its retention is the remote deployment's window,
+not this one.
+
 The main commands are:
 
 | Command | Purpose |
 | --- | --- |
 | `check` | Validate configuration and external services |
 | `migrate` | Apply application and River database migrations |
-| `poll` | Explicitly enqueue one or more source polls |
+| `poll` | Explicitly enqueue one or more source or subscription pulls |
 | `start` | Start episodes a poll-only source left waiting |
 | `retry` | Re-queue failed episodes at the stage that failed |
 | `stop` | Cancel every in-flight job and stop its work |

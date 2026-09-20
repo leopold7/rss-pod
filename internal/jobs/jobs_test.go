@@ -634,6 +634,174 @@ func TestDueSourcesAtRejectsInvalidCron(t *testing.T) {
 	}
 }
 
+func TestDueSubscriptionsAtOnlyMatchesCurrentMinute(t *testing.T) {
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			Schedule: config.ScheduleConfig{Timezone: "Asia/Shanghai"},
+		},
+		Subscriptions: []config.SubscriptionConfig{
+			// 08:00 Asia/Shanghai is 00:00 UTC.
+			{ID: "morning", Enabled: true, Schedule: config.ScheduleConfig{Cron: "0 8 * * *"}},
+			{ID: "paused", Enabled: false, Schedule: config.ScheduleConfig{Cron: "0 8 * * *"}},
+			{ID: "other-minute", Enabled: true, Schedule: config.ScheduleConfig{Cron: "2 8 * * *"}},
+		},
+	}
+
+	now := time.Date(2026, time.September, 20, 0, 0, 30, 0, time.UTC)
+	due, err := dueSubscriptionsAt(cfg, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].ID != "morning" {
+		t.Fatalf("dueSubscriptionsAt() = %#v, want only the morning subscription", due)
+	}
+
+	due, err = dueSubscriptionsAt(cfg, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("dueSubscriptionsAt() one minute later = %#v, want no catch-up", due)
+	}
+}
+
+func TestMirrorableEpisodesKeepsOnlyPlayableRemoteEpisodes(t *testing.T) {
+	published := time.Date(2026, time.September, 19, 22, 0, 0, 0, time.UTC)
+	episodes := []subscriptionEpisode{
+		{ID: "ready", Title: "已发布", AudioURL: "https://pod.example.com/a.mp3", State: "ready"},
+		{ID: "ready", Title: "重复", AudioURL: "https://pod.example.com/a.mp3"},
+		{ID: "waiting", Title: "等待下载", State: "pending"},
+		{ID: "hidden", Title: "已隐藏", AudioURL: "https://pod.example.com/b.mp3", Hidden: true},
+		{ID: "broken", Title: "生成失败", AudioURL: "  ", State: "failed"},
+		{ID: "", Title: "无 ID", AudioURL: "https://pod.example.com/c.mp3", PublishedAt: &published},
+	}
+	mirrored := mirrorableEpisodes(episodes)
+	if len(mirrored) != 2 {
+		t.Fatalf("mirrorableEpisodes() = %#v, want the ready episode and the ID-less fallback", mirrored)
+	}
+	if mirrored[0].ID != "ready" || mirrored[1].Title != "无 ID" {
+		t.Fatalf("mirrorableEpisodes() = %#v", mirrored)
+	}
+}
+
+func TestSubscriptionEpisodeIDPrefersRemoteIDAndFallsBackToDigest(t *testing.T) {
+	if got := subscriptionEpisodeID(subscriptionEpisode{ID: " 0f2d5a1c ", Title: "标题"}); got != "0f2d5a1c" {
+		t.Fatalf("subscriptionEpisodeID() = %q, want the trimmed remote ID", got)
+	}
+
+	published := time.Date(2026, time.September, 19, 22, 0, 0, 0, time.UTC)
+	episode := subscriptionEpisode{Title: "标题", PublishedAt: &published}
+	first := subscriptionEpisodeID(episode)
+	if !strings.HasPrefix(first, "sha256:") {
+		t.Fatalf("subscriptionEpisodeID() = %q, want a sha256 digest", first)
+	}
+	if second := subscriptionEpisodeID(episode); second != first {
+		t.Fatalf("subscriptionEpisodeID() is not stable: %q then %q", first, second)
+	}
+	other := episode
+	other.Title = "另一个标题"
+	if got := subscriptionEpisodeID(other); got == first {
+		t.Fatal("subscriptionEpisodeID() collided for different titles")
+	}
+	if got := subscriptionEpisodeID(subscriptionEpisode{PublishedAt: &published}); got != "" {
+		t.Fatalf("subscriptionEpisodeID() without a title or ID = %q, want empty", got)
+	}
+}
+
+func TestPollSubscriptionFetchEpisodesBuildsPullRequest(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != config.SubscriptionEpisodesPath {
+			t.Errorf("request = %s %s, want %s %s", r.Method, r.URL.Path, http.MethodGet, config.SubscriptionEpisodesPath)
+		}
+		query := r.URL.Query()
+		for field, want := range map[string]string{
+			"since":     "2026-09-17T16:00:00.000Z",
+			"before":    "2026-09-20T16:00:00.000Z",
+			"limit":     "500",
+			"source_id": "zhihu-daily",
+		} {
+			if got := query.Get(field); got != want {
+				t.Errorf("%s = %q, want %q", field, got, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"episodes":[{"id":"a1","source_id":"zhihu-daily","title":"一期","audio_url":"https://pod.example.com/a1.mp3","audio_byte_size":123,"audio_duration_seconds":45,"state":"ready"}]}`))
+	}))
+	defer server.Close()
+
+	subscription := config.SubscriptionConfig{
+		ID: "peer", BaseURL: server.URL + "/", SourceID: "zhihu-daily", Limit: 500,
+	}
+	worker := PollSubscriptionWorker{Client: server.Client()}
+	since := time.Date(2026, time.September, 17, 16, 0, 0, 0, time.UTC)
+	before := time.Date(2026, time.September, 20, 16, 0, 0, 0, time.UTC)
+	episodes, err := worker.fetchEpisodes(context.Background(), subscription, since, before, subscription.EffectiveLimit())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 1 {
+		t.Fatalf("episodes = %#v", episodes)
+	}
+	got := episodes[0]
+	if got.ID != "a1" || got.Title != "一期" || got.AudioURL != "https://pod.example.com/a1.mp3" ||
+		got.AudioByteSize != 123 || got.AudioDurationSeconds != 45 {
+		t.Fatalf("episode = %#v", got)
+	}
+	if requests != 1 {
+		t.Fatalf("request count = %d, want 1", requests)
+	}
+}
+
+func TestPollSubscriptionErrorClassification(t *testing.T) {
+	for _, test := range []struct {
+		status        int
+		wantPermanent bool
+	}{
+		{status: http.StatusNotFound, wantPermanent: true},
+		{status: http.StatusBadRequest, wantPermanent: true},
+		{status: http.StatusTooManyRequests, wantPermanent: false},
+		{status: http.StatusInternalServerError, wantPermanent: false},
+	} {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+			}))
+			defer server.Close()
+
+			worker := PollSubscriptionWorker{Client: server.Client()}
+			_, err := worker.fetchEpisodes(
+				context.Background(),
+				config.SubscriptionConfig{ID: "peer", BaseURL: server.URL},
+				time.Now().Add(-time.Hour), time.Now(), 10,
+			)
+			if err == nil {
+				t.Fatal("fetchEpisodes() unexpectedly succeeded")
+			}
+			var permanentErr *permanentError
+			if got := errors.As(err, &permanentErr); got != test.wantPermanent {
+				t.Fatalf("permanent = %t, want %t (error: %v)", got, test.wantPermanent, err)
+			}
+		})
+	}
+}
+
+func TestPollSubscriptionRejectsUnknownResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer server.Close()
+	worker := PollSubscriptionWorker{Client: server.Client()}
+	if _, err := worker.fetchEpisodes(
+		context.Background(),
+		config.SubscriptionConfig{ID: "peer", BaseURL: server.URL},
+		time.Now().Add(-time.Hour), time.Now(), 10,
+	); err == nil || !strings.Contains(err.Error(), "decode subscription peer response") {
+		t.Fatalf("fetchEpisodes() error = %v, want a decode error", err)
+	}
+}
+
 func TestHTMLToText(t *testing.T) {
 	input := `<article><h1>标题</h1><p>第一段 <strong>重点</strong></p><script>不可见</script><p>第二段&amp;结尾</p></article>`
 	got := htmlToText(input)

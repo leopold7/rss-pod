@@ -30,6 +30,22 @@ const (
 	DefaultStorageOperationTimeout = 2 * time.Minute
 )
 
+const (
+	// SubscriptionEpisodesPath is the public player endpoint a subscription
+	// mirrors; it is served by every rss-pod deployment.
+	SubscriptionEpisodesPath = "/api/v1/player/episodes"
+	// DefaultSubscriptionLookback covers the first pull of a subscription that
+	// has no completed run yet. Later pulls continue from the previous run.
+	DefaultSubscriptionLookback = 72 * time.Hour
+	// DefaultSubscriptionLimit and MaxSubscriptionLimit bound the page a
+	// subscription asks for. The remote player endpoint accepts at most 500.
+	DefaultSubscriptionLimit = 200
+	MaxSubscriptionLimit     = 500
+	// SubscriptionTimeFormat matches the millisecond precision the player
+	// endpoint examples use for its since/before window.
+	SubscriptionTimeFormat = "2006-01-02T15:04:05.000Z07:00"
+)
+
 // DefaultJinaBaseURL is the publishable fallback applied when
 // services.content.jina.base_url is missing or resolves to an empty value.
 // Deployments point JINA_BASE_URL at their own Jina instance to replace it.
@@ -43,6 +59,7 @@ type Config struct {
 	DialogueProfiles map[string]DialogueProfile `yaml:"dialogue_profiles"`
 	Defaults         DefaultsConfig             `yaml:"defaults"`
 	Sources          []SourceConfig             `yaml:"sources"`
+	Subscriptions    []SubscriptionConfig       `yaml:"subscriptions"`
 }
 
 type RuntimeConfig struct {
@@ -425,6 +442,94 @@ type FeedConfig struct {
 	URL string `yaml:"url" json:"url"`
 }
 
+// SubscriptionConfig mirrors another rss-pod deployment. Instead of reading a
+// feed, it pulls the remote player endpoint and republishes the episodes that
+// deployment already produced, so a deployment can carry podcasts that other
+// people generate. ID names the mirrored episodes locally: it becomes their
+// source_id and the name the player filter shows.
+type SubscriptionConfig struct {
+	ID      string `yaml:"id" json:"id"`
+	Name    string `yaml:"name" json:"name"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	// BaseURL is the origin of the remote deployment, without the API path.
+	BaseURL string `yaml:"base_url" json:"base_url"`
+	// SourceID selects one source of the remote deployment; empty mirrors every
+	// source it exposes.
+	SourceID string         `yaml:"source_id" json:"source_id,omitempty"`
+	Schedule ScheduleConfig `yaml:"schedule" json:"schedule"`
+	// Lookback is the window of the first pull, used until a run completes.
+	Lookback string `yaml:"lookback" json:"lookback,omitempty"`
+	// Limit is the page size requested from the remote endpoint.
+	Limit int `yaml:"limit" json:"limit,omitempty"`
+}
+
+// EffectiveLimit returns the page size sent to the remote endpoint.
+func (s SubscriptionConfig) EffectiveLimit() int {
+	if s.Limit <= 0 {
+		return DefaultSubscriptionLimit
+	}
+	return s.Limit
+}
+
+// LookbackDuration returns the window of the first pull.
+func (s SubscriptionConfig) LookbackDuration() (time.Duration, error) {
+	return optionalDuration(s.Lookback, DefaultSubscriptionLookback)
+}
+
+// EpisodesEndpoint is the remote player endpoint this subscription mirrors.
+func (s SubscriptionConfig) EpisodesEndpoint() string {
+	return strings.TrimRight(strings.TrimSpace(s.BaseURL), "/") + SubscriptionEpisodesPath
+}
+
+// EpisodesURL builds one pull URL. The remote endpoint filters on the window
+// between since and before, and source_id is optional: without it the remote
+// deployment returns every source it publishes.
+func (s SubscriptionConfig) EpisodesURL(since, before time.Time, limit int) string {
+	query := url.Values{}
+	query.Set("since", since.UTC().Format(SubscriptionTimeFormat))
+	query.Set("before", before.UTC().Format(SubscriptionTimeFormat))
+	query.Set("limit", strconv.Itoa(limit))
+	if sourceID := strings.TrimSpace(s.SourceID); sourceID != "" {
+		query.Set("source_id", sourceID)
+	}
+	return s.EpisodesEndpoint() + "?" + query.Encode()
+}
+
+// SourceRef names one entry of the player's source filter.
+type SourceRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// EpisodeSources lists every enabled owner of episodes: the feed sources that
+// generate them, followed by the subscriptions that mirror them.
+func (c *Config) EpisodeSources() []SourceRef {
+	refs := make([]SourceRef, 0, len(c.Sources)+len(c.Subscriptions))
+	for _, source := range c.Sources {
+		if source.Enabled {
+			refs = append(refs, SourceRef{ID: source.ID, Name: source.Name})
+		}
+	}
+	for _, subscription := range c.Subscriptions {
+		if subscription.Enabled {
+			refs = append(refs, SourceRef{ID: subscription.ID, Name: subscription.Name})
+		}
+	}
+	return refs
+}
+
+// EpisodeSourceName resolves the display name of any owner of episodes, so the
+// podcast feed works for a mirrored subscription as well as for a source.
+func (c *Config) EpisodeSourceName(id string) (string, bool) {
+	if source, ok := c.Source(id); ok {
+		return source.Name, true
+	}
+	if subscription, ok := c.Subscription(id); ok {
+		return subscription.Name, true
+	}
+	return "", false
+}
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -620,6 +725,34 @@ func (c *Config) Validate() error {
 			if maxAge, err := time.ParseDuration(c.EffectivePodcast(*source).MaxAge); err != nil || maxAge <= 0 {
 				return fmt.Errorf("source %s podcast.max_age must be a positive duration", source.ID)
 			}
+		}
+	}
+	subSeen := make(map[string]struct{}, len(c.Subscriptions))
+	for i := range c.Subscriptions {
+		subscription := &c.Subscriptions[i]
+		if subscription.ID == "" || subscription.Name == "" {
+			return fmt.Errorf("subscriptions[%d] id and name must not be empty", i)
+		}
+		// Both lists name episode owners, and a subscription ID becomes the
+		// source_id of the episodes it mirrors, so the two share one namespace.
+		if _, ok := seen[subscription.ID]; ok {
+			return fmt.Errorf("subscription id %q is already used by a source", subscription.ID)
+		}
+		if _, ok := subSeen[subscription.ID]; ok {
+			return fmt.Errorf("duplicate subscription id %q", subscription.ID)
+		}
+		subSeen[subscription.ID] = struct{}{}
+		if err := validateURL("subscription "+subscription.ID+" base_url", subscription.BaseURL); err != nil {
+			return err
+		}
+		if _, err := cronParser.Parse(subscription.Schedule.Cron); err != nil {
+			return fmt.Errorf("subscription %s schedule.cron: %w", subscription.ID, err)
+		}
+		if _, err := subscription.LookbackDuration(); err != nil {
+			return fmt.Errorf("subscription %s lookback %w", subscription.ID, err)
+		}
+		if subscription.Limit < 0 || subscription.Limit > MaxSubscriptionLimit {
+			return fmt.Errorf("subscription %s limit must be between 1 and %d, or zero for the default", subscription.ID, MaxSubscriptionLimit)
 		}
 	}
 	return nil
@@ -964,6 +1097,27 @@ func (c *Config) Source(id string) (SourceConfig, bool) {
 		}
 	}
 	return SourceConfig{}, false
+}
+
+func (c *Config) Subscription(id string) (SubscriptionConfig, bool) {
+	for _, subscription := range c.Subscriptions {
+		if subscription.ID == id {
+			return subscription, true
+		}
+	}
+	return SubscriptionConfig{}, false
+}
+
+// EnabledSubscriptions lists the subscriptions that pull from a remote
+// deployment.
+func (c *Config) EnabledSubscriptions() []SubscriptionConfig {
+	subscriptions := make([]SubscriptionConfig, 0, len(c.Subscriptions))
+	for _, subscription := range c.Subscriptions {
+		if subscription.Enabled {
+			subscriptions = append(subscriptions, subscription)
+		}
+	}
+	return subscriptions
 }
 
 // PollOnlySourceIDs lists the enabled sources whose episodes wait for a

@@ -41,6 +41,7 @@ func Run(ctx context.Context, cfg *config.Config) []Result {
 		{name: "minio", fn: checkMinIO},
 		{name: "public-media", fn: checkPublicMedia},
 		{name: "rss", fn: checkRSS},
+		{name: "subscriptions", fn: checkSubscriptions},
 		{name: "jina", fn: checkJina},
 		{name: "crawl4ai", fn: checkCrawl4AI},
 		{name: "llm", fn: checkLLM},
@@ -210,6 +211,52 @@ func checkRSS(ctx context.Context, cfg *config.Config) (string, error) {
 		items += len(feed.Items)
 	}
 	return fmt.Sprintf("%d enabled feeds, %d items", checked, items), nil
+}
+
+// checkSubscriptions pulls one page from every enabled mirror subscription, so
+// a wrong remote origin or an unknown remote source is reported by `check`
+// instead of by a failed scheduled run.
+func checkSubscriptions(ctx context.Context, cfg *config.Config) (string, error) {
+	checked := 0
+	episodes := 0
+	now := time.Now()
+	for _, subscription := range cfg.Subscriptions {
+		if !subscription.Enabled {
+			continue
+		}
+		lookback, err := subscription.LookbackDuration()
+		if err != nil {
+			return "", fmt.Errorf("subscription %s lookback: %w", subscription.ID, err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, subscription.EpisodesURL(now.Add(-lookback), now, 1), nil)
+		if err != nil {
+			return "", fmt.Errorf("subscription %s: %w", subscription.ID, err)
+		}
+		req.Header.Set("Accept", "application/json")
+		resp, err := newHTTPClient("", 30*time.Second).Do(req)
+		if err != nil {
+			return "", fmt.Errorf("subscription %s: %w", subscription.ID, err)
+		}
+		var payload struct {
+			Episodes []struct {
+				ID string `json:"id"`
+			} `json:"episodes"`
+		}
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("subscription %s returned HTTP %d", subscription.ID, resp.StatusCode)
+		}
+		if decodeErr != nil {
+			return "", fmt.Errorf("subscription %s response: %w", subscription.ID, decodeErr)
+		}
+		checked++
+		episodes += len(payload.Episodes)
+	}
+	if checked == 0 {
+		return "not used", nil
+	}
+	return fmt.Sprintf("%d enabled subscriptions, %d episodes in the lookback window", checked, episodes), nil
 }
 
 func checkJina(ctx context.Context, cfg *config.Config) (string, error) {

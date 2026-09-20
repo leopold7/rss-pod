@@ -46,23 +46,66 @@ func TestParsePollSourcesRejectsInvalidSelection(t *testing.T) {
 func TestEnqueuePollsValidatesBatchBeforeConnecting(t *testing.T) {
 	cfg := &config.Config{
 		Defaults: config.DefaultsConfig{Limits: config.LimitsConfig{MaxFeedItemsPerRun: 5}},
+		Sources:  []config.SourceConfig{{ID: "alpha", Enabled: true}},
+		Subscriptions: []config.SubscriptionConfig{
+			{ID: "mirror", Enabled: true, Limit: 10},
+		},
 	}
-	sources := []config.SourceConfig{{ID: "alpha", Enabled: true}}
+	targets := []PollTarget{{ID: "alpha"}}
 	tests := []struct {
-		name  string
-		times int
-		limit int
+		name   string
+		target []PollTarget
+		times  int
+		limit  int
 	}{
-		{name: "zero times", times: 0},
-		{name: "too many times", times: MaxManualPollTimes + 1},
-		{name: "negative limit", times: 1, limit: -1},
-		{name: "limit above source maximum", times: 1, limit: 6},
+		{name: "no target"},
+		{name: "zero times", target: targets, times: 0},
+		{name: "too many times", target: targets, times: MaxManualPollTimes + 1},
+		{name: "negative limit", target: targets, times: 1, limit: -1},
+		{name: "limit above source maximum", target: targets, times: 1, limit: 6},
+		{name: "limit above subscription maximum", target: []PollTarget{{ID: "mirror", Subscription: true}}, times: 1, limit: 11},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := EnqueuePolls(context.Background(), cfg, sources, test.times, test.limit); err == nil {
+			if _, err := EnqueuePolls(context.Background(), cfg, test.target, test.times, test.limit); err == nil {
 				t.Fatal("EnqueuePolls() unexpectedly succeeded")
 			}
 		})
+	}
+}
+
+func TestParsePollTargetsIncludesSubscriptions(t *testing.T) {
+	cfg := &config.Config{
+		Sources: []config.SourceConfig{
+			{ID: "alpha", Enabled: true},
+			{ID: "disabled", Enabled: false},
+		},
+		Subscriptions: []config.SubscriptionConfig{
+			{ID: "mirror", Enabled: true},
+			{ID: "paused", Enabled: false},
+		},
+	}
+
+	targets, err := ParsePollTargets(cfg, "mirror,alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PollTarget{{ID: "mirror", Subscription: true}, {ID: "alpha"}}
+	if len(targets) != len(want) || targets[0] != want[0] || targets[1] != want[1] {
+		t.Fatalf("ParsePollTargets() = %#v, want %#v", targets, want)
+	}
+
+	targets, err = ParsePollTargets(cfg, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 || targets[0] != want[1] || targets[1] != want[0] {
+		t.Fatalf("ParsePollTargets(all) = %#v, want enabled sources then subscriptions", targets)
+	}
+
+	for _, value := range []string{"", "unknown", "paused", "all,alpha"} {
+		if _, err := ParsePollTargets(cfg, value); err == nil {
+			t.Errorf("ParsePollTargets(%q) unexpectedly succeeded", value)
+		}
 	}
 }

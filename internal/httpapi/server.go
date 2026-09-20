@@ -141,19 +141,29 @@ func (s *Server) listSources(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) pollSource(w http.ResponseWriter, r *http.Request) {
 	sourceID := r.PathValue("sourceID")
-	source, ok := s.config.Source(sourceID)
-	if !ok {
+	// Both kinds of owner are polled through this endpoint: a feed source reads
+	// its RSS, a subscription mirrors the remote player API.
+	subscription, isSubscription := s.config.Subscription(sourceID)
+	source, isSource := s.config.Source(sourceID)
+	if !isSource && !isSubscription {
 		writeError(w, http.StatusNotFound, "source not found")
 		return
 	}
-	if !source.Enabled {
+	enabled := source.Enabled
+	maxLimit := 0
+	if isSubscription {
+		enabled = subscription.Enabled
+		maxLimit = subscription.EffectiveLimit()
+	} else {
+		maxLimit = s.config.EffectiveLimits(source).MaxFeedItemsPerRun
+	}
+	if !enabled {
 		writeError(w, http.StatusConflict, "source is disabled")
 		return
 	}
 	limit := 0
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
-		maxLimit := s.config.EffectiveLimits(source).MaxFeedItemsPerRun
 		if err != nil || parsed < 1 || parsed > maxLimit {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxLimit))
 			return
@@ -167,7 +177,12 @@ func (s *Server) pollSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	queued, err := jobs.EnqueuePoll(r.Context(), tx, s.river, sourceID, limit)
+	var queued jobs.EnqueuedPoll
+	if isSubscription {
+		queued, err = jobs.EnqueueSubscriptionPoll(r.Context(), tx, s.river, sourceID, limit)
+	} else {
+		queued, err = jobs.EnqueuePoll(r.Context(), tx, s.river, sourceID, limit)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -409,12 +424,19 @@ type podcastEnclosure struct {
 
 func (s *Server) podcastFeed(w http.ResponseWriter, r *http.Request) {
 	sourceID := r.PathValue("sourceID")
-	source, ok := s.config.Source(sourceID)
+	// A mirrored subscription owns published episodes too, so its feed is
+	// served from the same endpoint; only the default podcast window applies,
+	// because a subscription declares no source-level override.
+	name, ok := s.config.EpisodeSourceName(sourceID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "source not found")
 		return
 	}
-	maxAge, _ := time.ParseDuration(s.config.EffectivePodcast(source).MaxAge)
+	podcast := s.config.Defaults.Podcast
+	if source, found := s.config.Source(sourceID); found {
+		podcast = s.config.EffectivePodcast(source)
+	}
+	maxAge, _ := time.ParseDuration(podcast.MaxAge)
 	cutoff := time.Now().Add(-maxAge)
 	rows, err := s.pool.Query(r.Context(), `
 		SELECT id, title, audio_url, audio_byte_size, published_at
@@ -463,9 +485,9 @@ func (s *Server) podcastFeed(w http.ResponseWriter, r *http.Request) {
 	feed := podcastRSS{
 		Version: "2.0",
 		Channel: podcastChannel{
-			Title:       source.Name,
+			Title:       name,
 			Link:        feedURL,
-			Description: source.Name + " 自动生成的播客",
+			Description: name + " 自动生成的播客",
 			Items:       items,
 		},
 	}

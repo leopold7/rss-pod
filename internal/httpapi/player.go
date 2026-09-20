@@ -31,34 +31,24 @@ type playerServer struct {
 	// pollOnlySources lists the enabled sources whose episodes wait for a
 	// listener to start them, so they are listed before they are generated.
 	pollOnlySources []string
-	sources         []playerSource
-	noticeFile      string
-	themeToggle     bool
+	// sources is every enabled episode owner the filter can show: the feed
+	// sources and the subscriptions that mirror other deployments.
+	sources     []config.SourceRef
+	noticeFile  string
+	themeToggle bool
 }
 
 const maxNoticeBytes = 64 << 10
 
 var noticeMarkdown = goldmark.New(goldmark.WithExtensions(extension.GFM))
 
-type playerSource struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
 func newPlayerServer(cfg *config.Config, pool *pgxpool.Pool, riverClient *river.Client[pgx.Tx]) *playerServer {
-	sources := make([]playerSource, 0, len(cfg.Sources))
-	for _, source := range cfg.Sources {
-		if !source.Enabled {
-			continue
-		}
-		sources = append(sources, playerSource{ID: source.ID, Name: source.Name})
-	}
 	return &playerServer{
 		pool:            pool,
 		river:           riverClient,
 		cfg:             cfg,
 		pollOnlySources: cfg.PollOnlySourceIDs(),
-		sources:         sources,
+		sources:         cfg.EpisodeSources(),
 		noticeFile:      strings.TrimSpace(cfg.Runtime.HTTP.NoticeFile),
 		themeToggle:     cfg.Runtime.HTTP.ThemeToggleEnabled(),
 	}
