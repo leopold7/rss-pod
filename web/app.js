@@ -700,15 +700,58 @@ function createTab(key, label, count, selected, onSelect) {
 // The "all" control is shared in both layouts: the caret beside it switches
 // between every episode and the episodes saved on this device. The caret is a
 // sibling rather than a child, because a control cannot sit inside another one.
+// The click that opens the menu is listened for on the group rather than on the
+// caret, which is a small square in a row that is far taller: the whole control
+// answers to the menu, so no tap lands beside the caret and does nothing. The
+// label keeps picking its slot whenever that is a change; a press on a label
+// that is already the one in front has nothing left to do, so it opens the menu
+// instead of swallowing the tap.
 function createSharedControl(button) {
   const group = document.createElement("div");
   group.className = "shared-control";
-  group.append(button, createTabDropdown());
+  const caret = createTabDropdown();
+  group.append(button, caret);
+  // Both rows mark the control in front in their own way -- a tab through
+  // aria-selected, a filter through aria-pressed -- and the mark is read while
+  // the control is built, before a click can change what it stands for.
+  const inFront =
+    button.getAttribute("aria-selected") === "true" ||
+    button.getAttribute("aria-pressed") === "true";
+  // The label redraws the row it lives in through its own handler, which closes
+  // the menu and takes the caret with it, so both the row and the open menu have
+  // to be read on the way down -- the label has run by the time the group sees
+  // the click.
+  let menuWasOpen = false;
+  let row = null;
+  group.addEventListener(
+    "click",
+    () => {
+      row = group.parentElement;
+      menuWasOpen =
+        !elements.popupMenu.hidden &&
+        Boolean(popupMenuAnchor?.classList.contains("date-tab-caret"));
+    },
+    true,
+  );
+  group.addEventListener("click", (event) => {
+    // A label that is not the one in front picks its slot on its own.
+    if (button.contains(event.target) && !inFront) return;
+    event.stopPropagation();
+    if (menuWasOpen) {
+      closePopupMenu();
+      return;
+    }
+    // The menu hangs off the caret that stands in the row now, not off the one
+    // this click was made on if the label has just redrawn it.
+    toggleAllDropdown(row?.querySelector(".date-tab-caret") || caret);
+  });
   return group;
 }
 
 // The shared first tab switches between every feed and the entries saved on
-// this device, so the saved list needs no tab of its own.
+// this device, so the saved list needs no tab of its own. It stays a control of
+// its own for the accent, the title and the focus ring; the group it sits in is
+// what listens for the click.
 function createTabDropdown() {
   const button = document.createElement("button");
   button.className = "date-tab-caret";
@@ -719,10 +762,6 @@ function createTabDropdown() {
   button.setAttribute("aria-label", copy.listenLaterDropdown);
   button.title = copy.listenLaterDropdown;
   button.append(createIcon(ICON_CHEVRON_DOWN, "date-tab-caret-icon"));
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleAllDropdown(button);
-  });
   return button;
 }
 

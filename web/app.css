@@ -712,15 +712,18 @@ input:focus-visible {
 
 /* The "all" control carries a caret that opens the two choices as a menu. The
    caret has to be a sibling of the label, because one control cannot sit inside
-   another, so the group is what the two share: both take the same colour, and
-   the underline of a selected tab runs under the caret as well. The control
-   paints no box of its own, so nothing is ever framed around only part of it. */
+   another, so the group is what the two share: both take the same colour, the
+   underline of a selected tab runs under the caret as well, and the group is
+   what answers to the click that opens the menu, the caret being a small square
+   in a tall row. The control paints no box of its own, so nothing is ever
+   framed around only part of it. */
 .shared-control {
   position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
   gap: 0;
+  cursor: pointer;
 }
 
 /* The frame a tab or a filter would draw is switched off here, so the two
