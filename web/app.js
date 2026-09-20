@@ -149,6 +149,7 @@ const copy = {
     removeListenLater: "Remove from Listen later",
     laterAdded: "Saved for later",
     laterUnavailable: "This one cannot be started here",
+    playbackSkipped: "Could not play that episode",
     menuDownload: "Download",
     menuRetry: "Download again",
     openEpisodeActions: (title) => `Actions for ${title}`,
@@ -235,6 +236,7 @@ const copy = {
     removeListenLater: "取消稍后在听",
     laterAdded: "已加入稍后在听",
     laterUnavailable: "该条目无法在这里开始下载",
+    playbackSkipped: "这一条无法播放，已跳过",
     menuDownload: "下载",
     menuRetry: "重新下载",
     openEpisodeActions: (title) => `${title} 的操作`,
@@ -1294,6 +1296,87 @@ async function safePlay() {
   }
 }
 
+// An episode that never starts is the one failure a listener cannot see: the
+// screen is off, the row still says it is playing, and the element waits for
+// bytes that never arrive. The watch gives the host a second chance and then
+// lets the queue move on, so a dead source cannot park playback for the rest of
+// the trip.
+const STALL_TIMEOUT_MS = 20_000;
+// Playing audio moves at least this far in that window; waiting audio does not.
+const STALL_PROGRESS_SECONDS = 1;
+// A network that fails from end to end must not be walked through in one go.
+const AUTO_SKIP_WINDOW_MS = 60_000;
+const AUTO_SKIP_LIMIT = 3;
+
+let stallTimer = 0;
+let stallMarkTime = 0;
+let stallRetriedID = "";
+let autoSkips = 0;
+let lastAutoSkipAt = 0;
+
+function armStallWatchdog() {
+  window.clearTimeout(stallTimer);
+  stallMarkTime = elements.audio.currentTime || 0;
+  stallTimer = window.setTimeout(checkStalledPlayback, STALL_TIMEOUT_MS);
+}
+
+function clearStallWatchdog() {
+  window.clearTimeout(stallTimer);
+  stallTimer = 0;
+}
+
+// The position is remembered when the watch starts, so an episode that stalls
+// in the middle is caught the same way as one that never begins.
+function checkStalledPlayback() {
+  stallTimer = 0;
+  const episodeID = state.currentEpisodeID;
+  if (!episodeID || elements.audio.paused || elements.audio.ended) return;
+  if ((elements.audio.currentTime || 0) > stallMarkTime + STALL_PROGRESS_SECONDS) {
+    armStallWatchdog();
+    return;
+  }
+  if (stallRetriedID !== episodeID) {
+    stallRetriedID = episodeID;
+    retryStalledPlayback();
+    return;
+  }
+  skipUnplayableEpisode();
+}
+
+// Asking for the same source again does not mean starting the episode over.
+function retryStalledPlayback() {
+  const resumeAt = elements.audio.currentTime || 0;
+  const episodeID = state.currentEpisodeID;
+  elements.audio.load();
+  if (resumeAt > 0) {
+    elements.audio.addEventListener(
+      "loadedmetadata",
+      () => {
+        if (state.currentEpisodeID !== episodeID) return;
+        elements.audio.currentTime = Math.min(resumeAt, Math.max(0, elements.audio.duration - 1));
+      },
+      { once: true },
+    );
+  }
+  safePlay();
+}
+
+// An episode that will not play is left behind instead of leaving the listener
+// in silence. The limit stops a broken network from flicking through the whole
+// list in a minute, and the toast says why the episode changed.
+function skipUnplayableEpisode() {
+  if (!state.currentEpisodeID) return;
+  const now = Date.now();
+  autoSkips = now - lastAutoSkipAt < AUTO_SKIP_WINDOW_MS ? autoSkips + 1 : 1;
+  lastAutoSkipAt = now;
+  stallRetriedID = "";
+  clearStallWatchdog();
+  showToast(copy.playbackSkipped);
+  if (autoSkips > AUTO_SKIP_LIMIT) return;
+  const next = queueNeighbour(1);
+  if (next) selectEpisode(next, { autoplay: true });
+}
+
 function bindPlayerEvents() {
   elements.playToggle.addEventListener("click", () => {
     if (elements.audio.paused) safePlay();
@@ -1308,12 +1391,26 @@ function bindPlayerEvents() {
     // Playing an episode is the moment to pull the next one down for the rest
     // of the trip.
     preloadNextEpisode();
+    // With the screen off nothing else reports that this episode never started.
+    armStallWatchdog();
+  });
+  elements.audio.addEventListener("pause", clearStallWatchdog);
+  elements.audio.addEventListener("waiting", armStallWatchdog);
+  // A source that cannot be fetched or decoded is a playback failure whether or
+  // not the listener can see the screen.
+  elements.audio.addEventListener("error", () => {
+    if (elements.audio.error) skipUnplayableEpisode();
   });
   elements.audio.addEventListener("ended", () => {
+    clearStallWatchdog();
+    // The next episode is picked before the saved list lets go of this one:
+    // dropping it first would take the episode out of its own queue, and the
+    // player would jump back to the top of the list or stop entirely.
+    const next = queueNeighbour(1);
     // An episode that played through is done with, even when it was the last
     // one in the queue and nothing follows it.
     releaseListenedFromListenLater(state.currentEpisodeID);
-    moveInQueue(1);
+    if (next) selectEpisode(next, { autoplay: true });
   });
   elements.audio.addEventListener("loadedmetadata", () => {
     applyPlaybackRate();
@@ -1352,16 +1449,12 @@ function renderPlaybackState() {
 }
 
 function moveInQueue(offset) {
-  const queue = playableEpisodes();
-  if (queue.length === 0) return;
-  const currentIndex = queue.findIndex((episode) => episode.id === state.currentEpisodeID);
-  const nextIndex = currentIndex < 0 ? 0 : currentIndex + offset;
-  if (nextIndex < 0 || nextIndex >= queue.length) return;
-  selectEpisode(queue[nextIndex], { autoplay: true });
+  const next = queueNeighbour(offset);
+  if (next) selectEpisode(next, { autoplay: true });
 }
 
 function updateQueueButtons() {
-  const queue = playableEpisodes();
+  const queue = playbackQueue();
   const index = queue.findIndex((episode) => episode.id === state.currentEpisodeID);
   elements.previousButton.disabled = index <= 0;
   elements.nextButton.disabled = index < 0 || index >= queue.length - 1;
@@ -1476,8 +1569,26 @@ function isPlayable(episode) {
   return episode.audioURL !== "";
 }
 
-function playableEpisodes() {
-  return visibleEpisodes().filter(isPlayable);
+// The queue the transport walks is wider than the page: the list renders one
+// day or one feed at a time, but an episode that ends has to keep the player
+// going through the rest of the window instead of stopping at the end of a page
+// the listener cannot even swipe past with the screen off. The saved list is a
+// queue of its own while it is on screen, because an episode saved days ago is
+// older than anything the API still returns.
+function playbackQueue() {
+  const saved = listenLaterEpisodes().filter(isPlayable);
+  const inWindow = state.episodes.filter(isPlayable);
+  const holds = (queue) => queue.some((episode) => episode.id === state.currentEpisodeID);
+  if (showsListenLater(activeSlot())) return holds(saved) ? saved : inWindow;
+  return holds(inWindow) ? inWindow : saved;
+}
+
+// The episode the transport moves to, or null at either end of the queue.
+function queueNeighbour(offset) {
+  const queue = playbackQueue();
+  const index = queue.findIndex((episode) => episode.id === state.currentEpisodeID);
+  if (index < 0) return null;
+  return queue[index + offset] || null;
 }
 
 function countEpisodesForDate(key) {
@@ -2390,10 +2501,8 @@ function formatBytes(bytes) {
 // keeps going on a train with no signal. The fetch is idempotent per episode.
 function preloadNextEpisode() {
   if (!preloadNext) return;
-  const queue = playableEpisodes();
-  const index = queue.findIndex((episode) => episode.id === state.currentEpisodeID);
-  if (index < 0) return;
-  const next = queue[index + 1];
+  // The lookahead spans the whole queue, not just the page that is on screen.
+  const next = queueNeighbour(1);
   if (next) preloadEpisodeAudio(next);
 }
 
