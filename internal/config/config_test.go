@@ -1119,7 +1119,14 @@ func TestValidatePublicMediaHosts(t *testing.T) {
 		{
 			name:    "rejects an empty host",
 			hosts:   "    public_media_hosts:\n      \"\": https://media.example.com",
-			wantErr: "public_media_hosts keys must be bare host names",
+			wantErr: "public_media_hosts contains an empty host",
+		},
+		{
+			// An env:// variable the process never received is the usual reason
+			// for an empty value, so the error names it.
+			name:    "rejects an empty media address",
+			hosts:   "    public_media_hosts:\n      pod.example.com: env://RSS_POD_TEST_UNSET_MEDIA_BASE_URL",
+			wantErr: "public_media_hosts pod.example.com needs a media URL",
 		},
 		{
 			// A scheme would never match a request host, so it must not pass
@@ -1149,4 +1156,41 @@ func TestValidatePublicMediaHosts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Both sides of a pair may be an env:// reference, which lets a deployment keep
+// the public domain and its media origin out of the configuration file. An unset
+// variable resolves to an empty string, so the pair then fails validation.
+func TestMediaHostsFromEnvironment(t *testing.T) {
+	path := func(t *testing.T) string {
+		t.Helper()
+		data := strings.Replace(minimalConfig, "    public_media_base_url: http://localhost:9000/media",
+			`    public_media_base_url: http://localhost:9000/media
+    public_media_hosts:
+      env://RSS_POD_TEST_HOST: env://RSS_POD_TEST_MEDIA`, 1)
+		return writeConfig(t, data)
+	}
+
+	t.Run("both variables are substituted", func(t *testing.T) {
+		t.Setenv("RSS_POD_TEST_HOST", "pod.example.com")
+		t.Setenv("RSS_POD_TEST_MEDIA", "https://oss.example.com/rsspod-media")
+		cfg, err := Load(path(t))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if got := cfg.Runtime.Storage.MediaBaseURL("pod.example.com"); got != "https://oss.example.com/rsspod-media" {
+			t.Fatalf("MediaBaseURL(pod.example.com) = %q", got)
+		}
+		if got := cfg.Runtime.Storage.MediaBaseURL("other.example.com"); got != "http://localhost:9000/media" {
+			t.Fatalf("MediaBaseURL(other.example.com) = %q", got)
+		}
+	})
+
+	t.Run("an unset variable fails with the empty pair", func(t *testing.T) {
+		t.Setenv("RSS_POD_TEST_HOST", "")
+		t.Setenv("RSS_POD_TEST_MEDIA", "")
+		if _, err := Load(path(t)); err == nil {
+			t.Fatal("Load() accepted a pair that resolved to empty strings")
+		}
+	})
 }

@@ -760,10 +760,19 @@ func (c *Config) Validate() error {
 		return err
 	}
 	// A key is matched against a request host, so a scheme or a path in it would
-	// silently never match; reject it instead of ignoring the entry.
+	// silently never match; reject it instead of ignoring the entry. Both the key
+	// and the value may be an env:// reference, and a variable the process never
+	// received resolves to an empty string, so the empty cases name that reason
+	// instead of only reporting an invalid URL.
 	for host, baseURL := range c.Runtime.Storage.PublicMediaHosts {
-		if host == "" || strings.Contains(host, "/") {
+		if host == "" {
+			return errors.New("runtime.storage.public_media_hosts contains an empty host, which is what an unset env:// variable resolves to")
+		}
+		if strings.Contains(host, "/") {
 			return errors.New("runtime.storage.public_media_hosts keys must be bare host names")
+		}
+		if strings.TrimSpace(baseURL) == "" {
+			return fmt.Errorf("runtime.storage.public_media_hosts %s needs a media URL, because an unset env:// variable resolves to an empty string", host)
 		}
 		if err := validateURL("runtime.storage.public_media_hosts "+host, baseURL); err != nil {
 			return err
