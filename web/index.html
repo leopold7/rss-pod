@@ -186,6 +186,14 @@
                     </button>
                   </div>
                 </section>
+                <!-- A playback problem on a phone leaves nothing on the screen, so
+                     the panel keeps a record of what the player asked the browser
+                     for and opens it in a window of its own. -->
+                <section id="settings-diagnostics-section" class="settings-section">
+                  <p id="settings-diagnostics-label" class="settings-label">Playback log</p>
+                  <button id="settings-log-open" class="settings-log-open" type="button">View playback log</button>
+                  <p id="settings-log-summary" class="settings-log-summary" role="status"></p>
+                </section>
                 <!-- The header keeps these two controls on wide screens; on phones
                      they move in here so the header stays down to icon buttons. -->
                 <section id="settings-language-section" class="settings-section settings-mobile-only">
@@ -369,5 +377,22 @@
     <!-- One menu serves both the "All" dropdown and the long-press actions of a
          row. It hangs off the body because the tab row and the pages scroll. -->
     <div id="popup-menu" class="popup-menu" role="menu" hidden></div>
+
+    <!-- The playback log floats over the page: it is read on the device that
+         failed to play, and the same window copies it out. -->
+    <div id="log-dialog" class="log-dialog" role="dialog" aria-modal="true" aria-labelledby="log-title" hidden>
+      <div class="log-card">
+        <div class="log-head">
+          <p id="log-title" class="log-title">Playback log</p>
+          <p id="log-summary" class="log-summary"></p>
+        </div>
+        <ol id="log-entries" class="log-entries" aria-live="off"></ol>
+        <div class="log-actions">
+          <button id="log-copy" class="log-button" type="button">Copy</button>
+          <button id="log-clear" class="log-button" type="button">Clear</button>
+          <button id="log-close" class="log-button log-button-primary" type="button">Close</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

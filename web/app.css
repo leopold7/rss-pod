@@ -2576,3 +2576,277 @@ input:focus-visible {
 :root[data-theme="dark"] .episode-row.is-generation-failed {
   background: rgb(38 30 26 / 84%);
 }
+
+/* ---- Playback log ---- */
+
+/* The action that opens the log repeats the cache control: both are panel
+   actions that take the full width of the settings card. */
+.settings-log-open {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgb(191 213 236 / 66%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 72%);
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settings-log-open:hover {
+  border-color: rgb(117 175 237 / 72%);
+  background: var(--surface-blue);
+  color: var(--blue-hover);
+}
+
+.settings-log-open:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.settings-log-summary {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The log opens over the page instead of inside the panel: it is read on the
+   device that failed to play, and a phone shows the whole record at once. */
+.log-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  /* Flex rather than grid: a card sized as a percentage of a grid area would
+     fall back to its own content width and run off a phone screen. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(16 35 63 / 42%);
+  backdrop-filter: blur(3px);
+}
+
+/* The window is shown by its attribute, so the grid above must not leave an
+   empty overlay over the page while it is closed. */
+.log-dialog[hidden] {
+  display: none;
+}
+
+.log-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 720px;
+  min-width: 0;
+  max-height: min(82vh, 640px);
+  padding: 16px 18px 18px;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--surface-solid);
+  box-shadow: 0 24px 60px rgb(16 35 63 / 32%);
+  animation: popup-menu-in 140ms ease-out;
+}
+
+.log-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.log-title {
+  margin: 0;
+  color: var(--navy);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.log-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One line per event, in the order it happened, so the retries of an episode
+   read as a sequence rather than as scattered messages. */
+.log-entries {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-height: 0;
+  margin: 12px 0;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid rgb(191 213 236 / 52%);
+  border-radius: 12px;
+  background: rgb(226 239 252 / 42%);
+  list-style: none;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  color: var(--navy);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.log-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.log-level {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.log-line-info .log-level {
+  color: var(--muted);
+}
+
+.log-line-warn .log-level {
+  color: #b45309;
+}
+
+.log-line-error .log-level {
+  color: #d92d20;
+}
+
+.log-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.log-empty {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.log-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.log-button {
+  padding: 9px 16px;
+  border: 1px solid rgb(191 213 236 / 66%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 72%);
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* The primary action keeps its own surface, so the hover of the plain buttons
+   has to leave it alone rather than paint over it. */
+.log-button:not(.log-button-primary):hover {
+  border-color: rgb(117 175 237 / 72%);
+  background: var(--surface-blue);
+  color: var(--blue-hover);
+}
+
+.log-button:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.log-button-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #67b9ff, var(--blue));
+  color: #ffffff;
+}
+
+.log-button-primary:hover {
+  background: linear-gradient(135deg, #7cc4ff, var(--blue-hover));
+  color: #ffffff;
+}
+
+@media (max-width: 700px) {
+  .log-dialog {
+    padding: 10px;
+  }
+
+  .log-card {
+    max-height: 86vh;
+    padding: 14px;
+  }
+
+  /* A timestamp, a level, and a long detail cannot share a phone row, so the
+     detail takes the width under the two short ones. */
+  .log-line {
+    grid-template-columns: auto auto;
+  }
+
+  .log-text {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Dark theme for the log window and the action that opens it. */
+:root[data-theme="dark"] .settings-log-open {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(255 255 255 / 8%);
+  color: var(--navy);
+}
+
+:root[data-theme="dark"] .settings-log-open:hover {
+  border-color: rgb(110 168 251 / 58%);
+  background: rgb(110 168 251 / 16%);
+}
+
+:root[data-theme="dark"] .log-dialog {
+  background: rgb(4 10 18 / 62%);
+}
+
+:root[data-theme="dark"] .log-card {
+  background: #16202f;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 52%);
+}
+
+:root[data-theme="dark"] .log-entries {
+  border-color: rgb(80 116 160 / 42%);
+  background: rgb(11 20 32 / 72%);
+}
+
+:root[data-theme="dark"] .log-line-warn .log-level {
+  color: #fbbf24;
+}
+
+:root[data-theme="dark"] .log-line-error .log-level {
+  color: #fca5a5;
+}
+
+:root[data-theme="dark"] .log-button {
+  border-color: rgb(80 116 160 / 52%);
+  background: rgb(255 255 255 / 8%);
+  color: var(--navy);
+}
+
+:root[data-theme="dark"] .log-button:not(.log-button-primary):hover {
+  border-color: rgb(110 168 251 / 58%);
+  background: rgb(110 168 251 / 16%);
+}
+
+:root[data-theme="dark"] .log-button-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #3f83f1, #2f6ed5);
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .log-button-primary:hover {
+  background: linear-gradient(135deg, #5493f7, #3d7fe0);
+  color: #ffffff;
+}

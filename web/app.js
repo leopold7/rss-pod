@@ -16,6 +16,11 @@ const DIM_LISTENED_KEY = "rss-pod.personal-dim-listened";
 const PRELOAD_NEXT_KEY = "rss-pod.personal-preload-next";
 const AUDIO_CACHE_KEY = "rss-pod.audio-cache";
 const AUDIO_CACHE_NAME = "rss-pod-audio-v1";
+// What the player asked the browser for and what came back. The list is a
+// rolling record rather than a transcript, so it stays short enough to be read
+// on a phone and copied out in one piece.
+const AUDIO_LOG_KEY = "rss-pod.audio-log";
+const AUDIO_LOG_LIMIT = 200;
 const THEME_COLORS = { light: "#f4f9ff", dark: "#0b1420" };
 const prefersDarkMode = window.matchMedia("(prefers-color-scheme: dark)");
 const smallViewport = window.matchMedia("(max-width: 700px)");
@@ -153,6 +158,18 @@ const copy = {
     menuDownload: "Download",
     menuRetry: "Download again",
     openEpisodeActions: (title) => `Actions for ${title}`,
+    playbackLogLabel: "Playback log",
+    playbackLogAction: "View playback log",
+    playbackLogTitle: "Playback log",
+    playbackLogEmpty: "No playback events recorded yet",
+    playbackLogCount: (count, failed) =>
+      failed > 0 ? `${count} events · ${failed} failed` : `${count} events`,
+    playbackLogCopy: "Copy",
+    playbackLogCopied: "Log copied",
+    playbackLogCopyFailed: "Could not copy the log",
+    playbackLogClear: "Clear",
+    playbackLogCleared: "Log cleared",
+    playbackLogClose: "Close",
   },
   "zh-CN": {
     lang: "zh-CN",
@@ -240,6 +257,17 @@ const copy = {
     menuDownload: "下载",
     menuRetry: "重新下载",
     openEpisodeActions: (title) => `${title} 的操作`,
+    playbackLogLabel: "播放日志",
+    playbackLogAction: "查看播放日志",
+    playbackLogTitle: "播放日志",
+    playbackLogEmpty: "还没有记录到播放事件",
+    playbackLogCount: (count, failed) => (failed > 0 ? `${count} 条事件 · ${failed} 条失败` : `${count} 条事件`),
+    playbackLogCopy: "复制",
+    playbackLogCopied: "已复制日志",
+    playbackLogCopyFailed: "复制日志失败",
+    playbackLogClear: "清空",
+    playbackLogCleared: "已清空日志",
+    playbackLogClose: "关闭",
   },
 }[localeKey];
 
@@ -310,6 +338,16 @@ const elements = {
   preloadNextToggle: document.querySelector("#settings-preload"),
   cacheSummary: document.querySelector("#settings-cache-summary"),
   cacheClear: document.querySelector("#settings-cache-clear"),
+  settingsDiagnosticsLabel: document.querySelector("#settings-diagnostics-label"),
+  settingsLogOpen: document.querySelector("#settings-log-open"),
+  settingsLogSummary: document.querySelector("#settings-log-summary"),
+  logDialog: document.querySelector("#log-dialog"),
+  logTitle: document.querySelector("#log-title"),
+  logSummary: document.querySelector("#log-summary"),
+  logEntries: document.querySelector("#log-entries"),
+  logCopy: document.querySelector("#log-copy"),
+  logClear: document.querySelector("#log-clear"),
+  logClose: document.querySelector("#log-close"),
   popupMenu: document.querySelector("#popup-menu"),
   settingsLanguageLabel: document.querySelector("#settings-language-label"),
   settingsGithubLink: document.querySelector("#settings-github-link"),
@@ -383,6 +421,10 @@ let popupMenuIgnoreClick = false;
 let popupMenuOpenedAt = 0;
 let suppressClickUntil = 0;
 let nowPlayingText = copy.chooseEpisode;
+// The playback log belongs to this browser rather than to the deployment, and
+// it survives a reload: an episode that failed on a phone can be read in the
+// settings panel afterwards, without a console anywhere in sight.
+let playbackLog = readPlaybackLog();
 
 applyLocale();
 initTheme();
@@ -1416,8 +1458,17 @@ function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
     );
   }
   // A cached episode plays from the copy this page already holds.
-  elements.audio.src = audioSourceFor(episode);
+  const source = audioSourceFor(episode);
+  elements.audio.src = source;
   elements.audio.load();
+  // The chosen source is the first thing the log needs: a local copy that fails
+  // and a remote file that fails are two different problems.
+  logPlayback("info", autoplay ? "select and play" : "select", {
+    episode: episode.id,
+    source: source.startsWith("blob:") ? "cache" : "remote",
+    duration: episode.durationSeconds || "",
+    url: source,
+  });
   applyPlaybackRate();
   document.title = episode.title;
   renderNowPlayingTitle(episode.title);
@@ -1442,7 +1493,16 @@ async function safePlay(episodeID = state.currentEpisodeID) {
     await elements.audio.play();
   } catch (error) {
     if (!isDemoMode()) console.error("play audio", error);
-    if (error?.name === "AbortError") return;
+    // A request a newer source interrupted is expected on every retry, so it is
+    // recorded but never treated as a failure of its own.
+    if (error?.name === "AbortError") {
+      logPlayback("info", "play() aborted", { reason: "the source was requested again" });
+      return;
+    }
+    logPlayback("error", "play() refused", {
+      ...audioDiagnostics(),
+      reason: `${error?.name || "Error"}: ${error?.message || ""}`,
+    });
     if (episodeID && episodeID === state.currentEpisodeID) handlePlaybackFailure();
   }
 }
@@ -1516,6 +1576,9 @@ function checkStalledPlayback() {
     armStallWatchdog();
     return;
   }
+  // The element still says it is playing but the position has not moved: this
+  // is what a track that dies on its first second looks like from the inside.
+  logPlayback("warn", "no progress for 20s", audioDiagnostics());
   handlePlaybackFailure();
 }
 
@@ -1529,19 +1592,29 @@ function handlePlaybackFailure() {
     playFailureID = episodeID;
     playFailures = 0;
   }
+  // The attempts are already spent and the player is stopped on this episode:
+  // a late error from the source it was stopped on must not spend another
+  // attempt, and must not say the same thing a second time.
+  if (playFailures > PLAY_RETRY_LIMIT) return;
   playFailures += 1;
   playFailureSeconds = elements.audio.currentTime || 0;
   clearStallWatchdog();
+  const attempt = `${playFailures}/${PLAY_RETRY_LIMIT + 1}`;
   if (playFailures <= PLAY_RETRY_LIMIT) {
+    logPlayback("warn", `failure ${attempt}, retrying`, audioDiagnostics());
     retryPlayback(episodeID);
     return;
   }
+  logPlayback("error", `gave up after ${attempt}`, audioDiagnostics());
   stopUnplayableEpisode(episodeID);
 }
 
 // Asking for the same source again does not mean starting the episode over.
 function retryPlayback(episodeID) {
   const resumeAt = elements.audio.currentTime || 0;
+  // The restart is recorded with the position it resumes from, so the log shows
+  // whether every attempt dies at the same second or somewhere new.
+  logPlayback("info", "retry", { resumeAt: roundSeconds(resumeAt), attempt: `${playFailures}/${PLAY_RETRY_LIMIT + 1}` });
   elements.audio.load();
   if (resumeAt > 0) {
     elements.audio.addEventListener(
@@ -1575,6 +1648,7 @@ function recoverUnexpectedPause(episodeID) {
     if (!playingIntent || !elements.audio.paused) return;
     if (elements.audio.ended || elements.audio.error) return;
     if (Date.now() - playRequestedAt > PAUSE_RECOVERY_WINDOW_MS) return;
+    logPlayback("warn", "paused right after a start", audioDiagnostics());
     handlePlaybackFailure();
   }, PAUSE_RECOVERY_MS);
 }
@@ -1613,10 +1687,18 @@ function bindPlayerEvents() {
     recoverUnexpectedPause(state.currentEpisodeID);
   });
   elements.audio.addEventListener("waiting", armStallWatchdog);
+  // The element says it is producing sound now, which is how far that attempt
+  // got; an episode that never gets here never started at all.
+  elements.audio.addEventListener("playing", () =>
+    logPlayback("info", "playing", { at: roundSeconds(elements.audio.currentTime || 0) }),
+  );
+  elements.audio.addEventListener("stalled", () => logPlayback("warn", "network stalled", audioDiagnostics()));
   // A source that cannot be fetched or decoded is a playback failure whether or
   // not the listener can see the screen.
   elements.audio.addEventListener("error", () => {
-    if (elements.audio.error) handlePlaybackFailure();
+    if (!elements.audio.error) return;
+    logPlayback("error", "audio error", audioDiagnostics());
+    handlePlaybackFailure();
   });
   elements.audio.addEventListener("ended", () => {
     clearStallWatchdog();
@@ -1634,6 +1716,12 @@ function bindPlayerEvents() {
     playingIntent = false;
   });
   elements.audio.addEventListener("loadedmetadata", () => {
+    // The duration the browser reads back is compared with what the API
+    // promised, which tells a file that arrived whole from a stub.
+    logPlayback("info", "metadata loaded", {
+      duration: Number.isFinite(elements.audio.duration) ? roundSeconds(elements.audio.duration) : "",
+      buffered: roundSeconds(bufferedEndSeconds(elements.audio)),
+    });
     applyPlaybackRate();
     updateProgress();
     updateMediaSessionPosition();
@@ -1866,6 +1954,13 @@ function applyLocale() {
   elements.dimListenedLabel.textContent = copy.dimListenedLabel;
   elements.preloadNextLabel.textContent = copy.preloadNextLabel;
   elements.cacheClear.textContent = copy.clearCache;
+  elements.settingsDiagnosticsLabel.textContent = copy.playbackLogLabel;
+  elements.settingsLogOpen.textContent = copy.playbackLogAction;
+  elements.logTitle.textContent = copy.playbackLogTitle;
+  elements.logCopy.textContent = copy.playbackLogCopy;
+  elements.logClear.textContent = copy.playbackLogClear;
+  elements.logClose.textContent = copy.playbackLogClose;
+  renderPlaybackLogSummary();
   // The settings panel repeats both controls for phones, where the header
   // hides them; the label text is the only thing they need here.
   elements.settingsLanguageLabel.textContent = copy.languageLabel;
@@ -1981,6 +2076,7 @@ function initSettings() {
     );
   }
   initPersonalSettings();
+  initPlaybackLog();
   renderDisplaySettings();
 }
 
@@ -2755,7 +2851,10 @@ function preloadEpisodeAudio(episode) {
   }
   fetch(url, { cache: "no-store" })
     .then((response) => {
-      if (!response.ok) throw new Error(`audio preload returned ${response.status}`);
+      if (!response.ok) {
+        logPlayback("warn", "preload HTTP error", { episode: episode.id, status: response.status, url });
+        throw new Error(`audio preload returned ${response.status}`);
+      }
       return response.blob();
     })
     .then(async (blob) => {
@@ -2911,6 +3010,242 @@ function renderPersonalSettings() {
 
 function setSwitchState(element, enabled) {
   if (element) element.setAttribute("aria-checked", String(Boolean(enabled)));
+}
+
+// ---- Playback log ----
+
+// A playback problem is the hardest one to report: a phone has no console, and
+// an episode that dies on its first second leaves nothing on the screen. The
+// player writes down what it asked the browser for and what came back, and the
+// settings panel opens that record in a window of its own, so the reason - a
+// refused play(), a source the browser cannot use, a stalled download - can be
+// read where it happened and copied out in one piece.
+const PLAYBACK_LOG_LEVELS = ["info", "warn", "error"];
+// The names of the media element's error codes; the code alone is what says
+// whether the file was refused, could not be fetched, or could not be decoded.
+const MEDIA_ERROR_NAMES = {
+  1: "MEDIA_ERR_ABORTED",
+  2: "MEDIA_ERR_NETWORK",
+  3: "MEDIA_ERR_DECODE",
+  4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+};
+
+function readPlaybackLog() {
+  try {
+    const value = JSON.parse(readStoredString(AUDIO_LOG_KEY) || "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((entry) => entry && typeof entry === "object").slice(-AUDIO_LOG_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+// Every entry is one thing the player or the element did. A source that hiccups
+// repeats itself within moments, so an immediate repeat collapses into the same
+// line with a count instead of flooding the window.
+function logPlayback(level, event, details = null) {
+  const entry = {
+    at: Date.now(),
+    level,
+    event,
+    details: details ? describeLogDetails(details) : "",
+    repeats: 1,
+  };
+  const last = playbackLog[playbackLog.length - 1];
+  if (
+    last &&
+    last.level === entry.level &&
+    last.event === entry.event &&
+    last.details === entry.details &&
+    entry.at - last.at < 1_000
+  ) {
+    last.repeats += 1;
+    last.at = entry.at;
+  } else {
+    playbackLog.push(entry);
+    while (playbackLog.length > AUDIO_LOG_LIMIT) playbackLog.shift();
+  }
+  writeStorage(AUDIO_LOG_KEY, JSON.stringify(playbackLog));
+  if (elements.logDialog && !elements.logDialog.hidden) renderPlaybackLog();
+  renderPlaybackLogSummary();
+}
+
+function describeLogDetails(details) {
+  return Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
+}
+
+// What the element knows about itself at the moment of a failure: the error
+// code decides the fix, and the state around it says how far the audio got.
+function audioDiagnostics() {
+  const audio = elements.audio;
+  if (!audio) return {};
+  const error = audio.error;
+  const source = audio.currentSrc || audio.src || "";
+  const duration = audio.duration;
+  return {
+    episode: state.currentEpisodeID || "-",
+    src: source,
+    kind: source.startsWith("blob:") ? "blob" : source ? "remote" : "none",
+    err: error ? MEDIA_ERROR_NAMES[error.code] || `MEDIA_ERR_${error.code}` : "",
+    message: error?.message || "",
+    ready: audio.readyState,
+    network: audio.networkState,
+    paused: audio.paused,
+    ended: audio.ended,
+    at: roundSeconds(audio.currentTime || 0),
+    duration: Number.isFinite(duration) ? roundSeconds(duration) : "",
+    buffered: roundSeconds(bufferedEndSeconds(audio)),
+  };
+}
+
+function bufferedEndSeconds(audio) {
+  const ranges = audio.buffered;
+  if (!ranges || ranges.length === 0) return 0;
+  return ranges.end(ranges.length - 1);
+}
+
+function roundSeconds(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function formatLogTime(at) {
+  const date = new Date(at);
+  if (!Number.isFinite(date.getTime())) return "-";
+  const pad = (value, size = 2) => String(value).padStart(size, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`
+  );
+}
+
+function playbackLogEvent(entry) {
+  const repeat = entry.repeats > 1 ? ` ×${entry.repeats}` : "";
+  return `${entry.event}${repeat}${entry.details ? ` ${entry.details}` : ""}`;
+}
+
+function playbackLogLine(entry) {
+  return `${formatLogTime(entry.at)} ${String(entry.level).toUpperCase()} ${playbackLogEvent(entry)}`;
+}
+
+function playbackLogText() {
+  if (playbackLog.length === 0) return copy.playbackLogEmpty;
+  return playbackLog.map(playbackLogLine).join("\n");
+}
+
+function createPlaybackLogLine(entry) {
+  const level = PLAYBACK_LOG_LEVELS.includes(entry.level) ? entry.level : "info";
+  const line = document.createElement("li");
+  line.className = `log-line log-line-${level}`;
+  const time = document.createElement("time");
+  time.className = "log-time";
+  time.textContent = formatLogTime(entry.at);
+  const mark = document.createElement("span");
+  mark.className = "log-level";
+  mark.textContent = String(entry.level).toUpperCase();
+  const text = document.createElement("span");
+  text.className = "log-text";
+  text.textContent = playbackLogEvent(entry);
+  line.append(time, mark, text);
+  return line;
+}
+
+function renderPlaybackLog({ scrollToEnd = false } = {}) {
+  if (!elements.logEntries) return;
+  const list = elements.logEntries;
+  // An entry that arrives while the window is open must not pull a reader who
+  // scrolled back up down again.
+  const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+  if (playbackLog.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "log-empty";
+    empty.textContent = copy.playbackLogEmpty;
+    list.replaceChildren(empty);
+  } else {
+    list.replaceChildren(...playbackLog.map(createPlaybackLogLine));
+  }
+  // The newest entry is the one being looked for, so the window opens at the end.
+  if (scrollToEnd || atEnd) list.scrollTop = list.scrollHeight;
+  renderPlaybackLogSummary();
+}
+
+function renderPlaybackLogSummary() {
+  const failed = playbackLog.filter((entry) => entry.level === "error").length;
+  const summary = playbackLog.length === 0 ? copy.playbackLogEmpty : copy.playbackLogCount(playbackLog.length, failed);
+  if (elements.settingsLogSummary) elements.settingsLogSummary.textContent = summary;
+  if (elements.logSummary) elements.logSummary.textContent = summary;
+}
+
+function initPlaybackLog() {
+  if (!elements.logDialog) return;
+  elements.settingsLogOpen?.addEventListener("click", () => {
+    // The window covers the panel it was opened from, so the panel folds away.
+    closeSettings();
+    openPlaybackLog();
+  });
+  elements.logClose?.addEventListener("click", () => closePlaybackLog({ focusToggle: true }));
+  elements.logCopy?.addEventListener("click", () => copyPlaybackLog());
+  elements.logClear?.addEventListener("click", () => clearPlaybackLog());
+  elements.logDialog.addEventListener("click", (event) => {
+    // Only the backdrop closes it; a click inside the card belongs to the card.
+    if (event.target === elements.logDialog) closePlaybackLog({ focusToggle: true });
+  });
+  // Escape is taken from the document rather than the window, because a click
+  // on the log itself leaves the focus on the body.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || elements.logDialog.hidden) return;
+    closePlaybackLog({ focusToggle: true });
+  });
+}
+
+function openPlaybackLog() {
+  elements.logDialog.hidden = false;
+  renderPlaybackLog({ scrollToEnd: true });
+  elements.logClose?.focus({ preventScroll: true });
+}
+
+function closePlaybackLog({ focusToggle = false } = {}) {
+  elements.logDialog.hidden = true;
+  if (focusToggle) elements.settingsToggle?.focus({ preventScroll: true });
+}
+
+async function copyPlaybackLog() {
+  const text = playbackLogText();
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(copy.playbackLogCopied);
+  } catch {
+    // A page without the clipboard API, or one served over plain http, still
+    // has to be able to hand the record over.
+    showToast(copyTextFallback(text) ? copy.playbackLogCopied : copy.playbackLogCopyFailed);
+  }
+}
+
+function copyTextFallback(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "-1000px";
+  document.body.append(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  return copied;
+}
+
+function clearPlaybackLog() {
+  playbackLog = [];
+  removeStorage(AUDIO_LOG_KEY);
+  renderPlaybackLog();
+  showToast(copy.playbackLogCleared);
 }
 
 // ---- The now playing title ----
