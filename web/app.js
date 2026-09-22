@@ -1470,10 +1470,12 @@ function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
       { once: true },
     );
   }
-  // Every selection is a new source, so its probe starts out unanswered.
+  // Every selection is a new source, so its probe starts out unanswered, and an
+  // attempt the player scheduled for the episode before this one is dropped.
   probedSourceURL = "";
+  cancelScheduledRetry();
   // A cached episode plays from the copy this page already holds.
-  const source = audioSourceFor(episode);
+  const source = retrySourceURL(audioSourceFor(episode));
   elements.audio.src = source;
   elements.audio.load();
   // The chosen source is the first thing the log needs: a local copy that fails
@@ -1518,7 +1520,10 @@ async function safePlay(episodeID = state.currentEpisodeID) {
       ...audioDiagnostics(),
       reason: `${error?.name || "Error"}: ${error?.message || ""}`,
     });
-    if (episodeID && episodeID === state.currentEpisodeID) handlePlaybackFailure();
+    // A source the element has already refused has spent its attempt: the play()
+    // that is refused on top of it is the same failure reported twice, and
+    // counting it twice would cost half of the attempts the player has.
+    if (episodeID && episodeID === state.currentEpisodeID && !sourceWasRefused()) handlePlaybackFailure();
   }
 }
 
@@ -1529,6 +1534,18 @@ function requestPlayback() {
   // A listener who asks again also asks the source again: the same question put
   // to the network a moment later can have a different answer.
   probedSourceURL = "";
+  // The attempt the player had scheduled for itself is not waited for either.
+  cancelScheduledRetry();
+  // An element that has already refused its source does not fetch it again for a
+  // play(), it refuses again at once. Selecting the episode over is what putting
+  // a source back together means, and it starts where the episode had stopped.
+  if (elements.audio.error) {
+    const episode = findEpisode(state.currentEpisodeID);
+    if (episode) {
+      selectEpisode(episode, { autoplay: true, resumeAt: elements.audio.currentTime || 0 });
+      return;
+    }
+  }
   return safePlay();
 }
 
@@ -1536,6 +1553,9 @@ function requestPlayback() {
 // lock screen asked for is never mistaken for a failure and retried.
 function pausePlayback() {
   playingIntent = false;
+  // A stop the listener asked for also ends the attempt the player had scheduled
+  // for itself.
+  cancelScheduledRetry();
   elements.audio.pause();
 }
 
@@ -1553,6 +1573,10 @@ const PLAY_RETRY_LIMIT = 3;
 // The attempts are only given back once the episode is properly under way: a
 // source that dies right after every restart must not be retried for ever.
 const PLAY_RETRY_PROGRESS_SECONDS = 5;
+// The attempts are spaced out, and each one gets more room than the last: a
+// source that just dropped needs a moment to come back, and three attempts spent
+// within a fifth of a second are three attempts wasted.
+const RETRY_BACKOFF_MS = [1_000, 3_000, 9_000];
 // A pause the episode change leaves behind settles after the event, so the
 // element is given a moment to start before its state is taken at face value.
 const PAUSE_RECOVERY_MS = 1_200;
@@ -1575,6 +1599,14 @@ let playFailureSeconds = 0;
 // The source whose probe has already been answered, so the retries of one
 // episode do not ask the network the same question four times over.
 let probedSourceURL = "";
+// The attempt the player scheduled for itself, so a listener who takes over is
+// never left waiting behind it.
+let retryTimer = 0;
+// A source that already failed is asked for through a different address the next
+// time it is used: a CDN can remember a 404 for days and hand the same answer
+// back, which would make every retry of a missing object a wasted request.
+const failedSourceURLs = new Set();
+let retryNonce = 0;
 
 function armStallWatchdog() {
   window.clearTimeout(stallTimer);
@@ -1606,12 +1638,25 @@ function checkStalledPlayback() {
 // A stall, an error, a play() that was refused, a pause nobody asked for: they
 // all spend one attempt and get the same retry. When the attempts are gone the
 // player stops where it is, and the toast says why.
+// The states in which the element could not use the source at all, as opposed to
+// a stream that started and then dropped. These are the ones a different address
+// can help with, because the address itself is what was refused.
+function sourceWasRefused(audio = elements.audio) {
+  if (!audio) return false;
+  return audio.error?.code === MEDIA_ERR_SRC_NOT_SUPPORTED || audio.networkState === AUDIO_NETWORK_NO_SOURCE;
+}
+
 function handlePlaybackFailure() {
   const episodeID = state.currentEpisodeID;
   if (!episodeID) return;
   // The element says it cannot use the source, which covers a missing object, an
   // error page and a connection that never came up. Its error code cannot tell
-  // those apart, so the network is asked directly before the attempts are spent.
+  // those apart, so the source is remembered as one to ask for differently and
+  // the network is asked directly, before the attempts are spent on it.
+  if (sourceWasRefused()) {
+    const episode = findEpisode(episodeID);
+    if (episode?.audioURL) failedSourceURLs.add(episode.audioURL);
+  }
   probeUnplayableSource();
   if (playFailureID !== episodeID) {
     playFailureID = episodeID;
@@ -1634,24 +1679,68 @@ function handlePlaybackFailure() {
   stopUnplayableEpisode(episodeID);
 }
 
-// Asking for the same source again does not mean starting the episode over.
+// The wait before an attempt grows with the attempts: a second gives a blip the
+// room to pass, and the last one gives a short outage the room it needs.
+function retryBackoffMs() {
+  const index = Math.min(Math.max(playFailures, 1), RETRY_BACKOFF_MS.length) - 1;
+  return RETRY_BACKOFF_MS[index];
+}
+
+function cancelScheduledRetry() {
+  window.clearTimeout(retryTimer);
+  retryTimer = 0;
+}
+
+// A failed source is asked for through a different address, because the address
+// that was refused can be remembered as refused - by the CDN, which keeps a 404
+// for days. The audio URL of a deployment carries no query string of its own, so
+// one is added; an address that already has one is left alone, because it may be
+// signed and a signed address does not survive an edit.
+function retrySourceURL(url) {
+  if (!url || url.startsWith("blob:") || url.includes("?") || !failedSourceURLs.has(url)) return url;
+  retryNonce += 1;
+  return `${url}?retry=${retryNonce}`;
+}
+
+// The buster that function adds, so the two addresses are known to be the same
+// source wherever that matters.
+const RETRY_BUSTER_PATTERN = /([?&])retry=\d+$/;
+
+// Asking for the same source again does not mean starting the episode over, and
+// it does not happen at once: the source is given the moment it needs to come
+// back, and the listener keeps the power to take the attempt over.
 function retryPlayback(episodeID) {
   const resumeAt = elements.audio.currentTime || 0;
-  // The restart is recorded with the position it resumes from, so the log shows
-  // whether every attempt dies at the same second or somewhere new.
-  logPlayback("info", "retry", { resumeAt: roundSeconds(resumeAt), attempt: `${playFailures}/${PLAY_RETRY_LIMIT + 1}` });
-  elements.audio.load();
-  if (resumeAt > 0) {
-    elements.audio.addEventListener(
-      "loadedmetadata",
-      () => {
-        if (state.currentEpisodeID !== episodeID) return;
-        elements.audio.currentTime = Math.min(resumeAt, Math.max(0, elements.audio.duration - 1));
-      },
-      { once: true },
-    );
-  }
-  safePlay(episodeID);
+  const wait = retryBackoffMs();
+  // The restart is recorded with the position it resumes from and the wait it was
+  // given, so the log shows whether every attempt dies at the same second.
+  logPlayback("info", "retry", {
+    resumeAt: roundSeconds(resumeAt),
+    attempt: `${playFailures}/${PLAY_RETRY_LIMIT + 1}`,
+    wait: `${Math.round(wait / 1000)}s`,
+  });
+  cancelScheduledRetry();
+  retryTimer = window.setTimeout(() => {
+    retryTimer = 0;
+    // A listener who paused, or who moved to another episode, is no longer
+    // waiting for this attempt.
+    if (state.currentEpisodeID !== episodeID || !playingIntent) return;
+    const episode = findEpisode(episodeID);
+    if (!episode) return;
+    elements.audio.src = retrySourceURL(audioSourceFor(episode));
+    elements.audio.load();
+    if (resumeAt > 0) {
+      elements.audio.addEventListener(
+        "loadedmetadata",
+        () => {
+          if (state.currentEpisodeID !== episodeID) return;
+          elements.audio.currentTime = Math.min(resumeAt, Math.max(0, elements.audio.duration - 1));
+        },
+        { once: true },
+      );
+    }
+    safePlay(episodeID);
+  }, wait);
 }
 
 // The attempts are paid back as the episode gets going, so a source that keeps
@@ -1702,13 +1791,13 @@ function probeUnplayableSource() {
   // A copy already on the device has no answer of its own to report, and a stall
   // is not a source problem: only a refused source is asked about.
   if (!url || url.startsWith("blob:")) return;
-  const refused =
-    audio.error?.code === MEDIA_ERR_SRC_NOT_SUPPORTED || audio.networkState === AUDIO_NETWORK_NO_SOURCE;
-  if (!refused) return;
-  // The retries of one episode all ask the same question, so one answer is kept
-  // until the listener selects the episode or asks for it again.
-  if (probedSourceURL === url) return;
-  probedSourceURL = url;
+  if (!sourceWasRefused(audio)) return;
+  // The retries of one episode all ask about the same object: the address they
+  // add a buster to is not a different source, so one answer is kept until the
+  // listener selects the episode or asks for it again.
+  const key = url.replace(RETRY_BUSTER_PATTERN, "");
+  if (probedSourceURL === key) return;
+  probedSourceURL = key;
   const details = { episode: state.currentEpisodeID || "-", url };
   fetch(url, { cache: "no-store" })
     .then((response) => {
