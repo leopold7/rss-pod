@@ -2671,6 +2671,12 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* The level switcher repeats the settings segmented control, so the window
+   reads as a part of the panel it was opened from. */
+.log-filters {
+  margin-top: 12px;
+}
+
 /* One line per event, in the order it happened, so the retries of an episode
    read as a sequence rather than as scattered messages. */
 .log-entries {

@@ -164,6 +164,10 @@ const copy = {
     playbackLogEmpty: "No playback events recorded yet",
     playbackLogCount: (count, failed) =>
       failed > 0 ? `${count} events · ${failed} failed` : `${count} events`,
+    playbackLogFilterLabel: "Filter by level",
+    playbackLogFilters: { all: "All", info: "INFO", warn: "WARN", error: "ERROR" },
+    playbackLogFilterCount: (shown, total) => `showing ${shown} of ${total} events`,
+    playbackLogFilterEmpty: (level) => `No ${level} events`,
     playbackLogCopy: "Copy",
     playbackLogCopied: "Log copied",
     playbackLogCopyFailed: "Could not copy the log",
@@ -262,6 +266,10 @@ const copy = {
     playbackLogTitle: "播放日志",
     playbackLogEmpty: "还没有记录到播放事件",
     playbackLogCount: (count, failed) => (failed > 0 ? `${count} 条事件 · ${failed} 条失败` : `${count} 条事件`),
+    playbackLogFilterLabel: "按级别筛选",
+    playbackLogFilters: { all: "全部", info: "INFO", warn: "WARN", error: "ERROR" },
+    playbackLogFilterCount: (shown, total) => `显示 ${shown} / ${total} 条`,
+    playbackLogFilterEmpty: (level) => `没有 ${level} 级别的记录`,
     playbackLogCopy: "复制",
     playbackLogCopied: "已复制日志",
     playbackLogCopyFailed: "复制日志失败",
@@ -344,6 +352,8 @@ const elements = {
   logDialog: document.querySelector("#log-dialog"),
   logTitle: document.querySelector("#log-title"),
   logSummary: document.querySelector("#log-summary"),
+  logFilters: document.querySelector("#log-filters"),
+  logLevelButtons: [...document.querySelectorAll("[data-log-level]")],
   logEntries: document.querySelector("#log-entries"),
   logCopy: document.querySelector("#log-copy"),
   logClear: document.querySelector("#log-clear"),
@@ -425,6 +435,9 @@ let nowPlayingText = copy.chooseEpisode;
 // it survives a reload: an episode that failed on a phone can be read in the
 // settings panel afterwards, without a console anywhere in sight.
 let playbackLog = readPlaybackLog();
+// The window opens on every level and a level is only hidden until the page is
+// reloaded, so a failure is never out of sight by accident.
+let logLevelFilter = "all";
 
 applyLocale();
 initTheme();
@@ -1457,6 +1470,8 @@ function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
       { once: true },
     );
   }
+  // Every selection is a new source, so its probe starts out unanswered.
+  probedSourceURL = "";
   // A cached episode plays from the copy this page already holds.
   const source = audioSourceFor(episode);
   elements.audio.src = source;
@@ -1511,6 +1526,9 @@ async function safePlay(episodeID = state.currentEpisodeID) {
 // retries the player spends on its own belong to one run of one episode.
 function requestPlayback() {
   playFailures = 0;
+  // A listener who asks again also asks the source again: the same question put
+  // to the network a moment later can have a different answer.
+  probedSourceURL = "";
   return safePlay();
 }
 
@@ -1554,6 +1572,9 @@ let playRequestedAt = 0;
 let playFailureID = "";
 let playFailures = 0;
 let playFailureSeconds = 0;
+// The source whose probe has already been answered, so the retries of one
+// episode do not ask the network the same question four times over.
+let probedSourceURL = "";
 
 function armStallWatchdog() {
   window.clearTimeout(stallTimer);
@@ -1588,6 +1609,10 @@ function checkStalledPlayback() {
 function handlePlaybackFailure() {
   const episodeID = state.currentEpisodeID;
   if (!episodeID) return;
+  // The element says it cannot use the source, which covers a missing object, an
+  // error page and a connection that never came up. Its error code cannot tell
+  // those apart, so the network is asked directly before the attempts are spent.
+  probeUnplayableSource();
   if (playFailureID !== episodeID) {
     playFailureID = episodeID;
     playFailures = 0;
@@ -1663,6 +1688,46 @@ function stopUnplayableEpisode(episodeID) {
   unmarkEpisodeListened(episodeID);
   showToast(copy.playbackFailed);
   renderPlaybackState();
+}
+
+// A source the element refuses is either gone (HTTP 404/5xx), behind an error
+// page, unreachable, or whole but undecodable, and the element reports all of
+// them as one code. Asking the source once turns that into the thing that can be
+// acted on: an object that has to be put back, a host that has to be reached, or
+// a file that has to be decoded again.
+function probeUnplayableSource() {
+  const audio = elements.audio;
+  if (!audio) return;
+  const url = audio.currentSrc || audio.src || "";
+  // A copy already on the device has no answer of its own to report, and a stall
+  // is not a source problem: only a refused source is asked about.
+  if (!url || url.startsWith("blob:")) return;
+  const refused =
+    audio.error?.code === MEDIA_ERR_SRC_NOT_SUPPORTED || audio.networkState === AUDIO_NETWORK_NO_SOURCE;
+  if (!refused) return;
+  // The retries of one episode all ask the same question, so one answer is kept
+  // until the listener selects the episode or asks for it again.
+  if (probedSourceURL === url) return;
+  probedSourceURL = url;
+  const details = { episode: state.currentEpisodeID || "-", url };
+  fetch(url, { cache: "no-store" })
+    .then((response) => {
+      // Only the answer is wanted here: the audio itself is not downloaded. A
+      // media host without a CORS header for this site cannot be read at all,
+      // which the catch below reports as a request that never arrived.
+      if (response.body) response.body.cancel().catch(() => {});
+      logPlayback(response.ok ? "info" : "error", "source probe", {
+        ...details,
+        status: response.status,
+        type: response.headers.get("content-type") || "",
+      });
+    })
+    .catch((error) => {
+      logPlayback("warn", "source probe failed", {
+        ...details,
+        reason: `${error?.name || "Error"}: ${error?.message || ""}`,
+      });
+    });
 }
 
 function bindPlayerEvents() {
@@ -1957,9 +2022,14 @@ function applyLocale() {
   elements.settingsDiagnosticsLabel.textContent = copy.playbackLogLabel;
   elements.settingsLogOpen.textContent = copy.playbackLogAction;
   elements.logTitle.textContent = copy.playbackLogTitle;
+  elements.logFilters?.setAttribute("aria-label", copy.playbackLogFilterLabel);
+  for (const button of elements.logLevelButtons) {
+    button.textContent = copy.playbackLogFilters[button.dataset.logLevel];
+  }
   elements.logCopy.textContent = copy.playbackLogCopy;
   elements.logClear.textContent = copy.playbackLogClear;
   elements.logClose.textContent = copy.playbackLogClose;
+  renderLogLevelFilter();
   renderPlaybackLogSummary();
   // The settings panel repeats both controls for phones, where the header
   // hides them; the label text is the only thing they need here.
@@ -3029,6 +3099,10 @@ const MEDIA_ERROR_NAMES = {
   3: "MEDIA_ERR_DECODE",
   4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
 };
+// A source the element refused, and a source it has run out of: the two states
+// the source probe below is asked about.
+const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
+const AUDIO_NETWORK_NO_SOURCE = 3;
 
 function readPlaybackLog() {
   try {
@@ -3152,19 +3226,43 @@ function createPlaybackLogLine(entry) {
   return line;
 }
 
+// The record is one sequence in time, so a level filter only narrows what is on
+// screen; nothing is ever dropped from the log itself.
+function visibleLogEntries() {
+  if (logLevelFilter === "all") return playbackLog;
+  return playbackLog.filter((entry) => entry.level === logLevelFilter);
+}
+
+function renderLogLevelFilter() {
+  for (const button of elements.logLevelButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.logLevel === logLevelFilter));
+  }
+}
+
+function setLogLevelFilter(level) {
+  if (level !== "all" && !PLAYBACK_LOG_LEVELS.includes(level)) return;
+  logLevelFilter = level;
+  renderLogLevelFilter();
+  renderPlaybackLog({ scrollToEnd: true });
+}
+
 function renderPlaybackLog({ scrollToEnd = false } = {}) {
   if (!elements.logEntries) return;
   const list = elements.logEntries;
+  const entries = visibleLogEntries();
   // An entry that arrives while the window is open must not pull a reader who
   // scrolled back up down again.
   const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
-  if (playbackLog.length === 0) {
+  if (entries.length === 0) {
     const empty = document.createElement("li");
     empty.className = "log-empty";
-    empty.textContent = copy.playbackLogEmpty;
+    // A level with nothing in it says so, because the record itself may well
+    // hold events the filter is hiding.
+    empty.textContent =
+      playbackLog.length === 0 ? copy.playbackLogEmpty : copy.playbackLogFilterEmpty(logLevelFilter.toUpperCase());
     list.replaceChildren(empty);
   } else {
-    list.replaceChildren(...playbackLog.map(createPlaybackLogLine));
+    list.replaceChildren(...entries.map(createPlaybackLogLine));
   }
   // The newest entry is the one being looked for, so the window opens at the end.
   if (scrollToEnd || atEnd) list.scrollTop = list.scrollHeight;
@@ -3175,7 +3273,14 @@ function renderPlaybackLogSummary() {
   const failed = playbackLog.filter((entry) => entry.level === "error").length;
   const summary = playbackLog.length === 0 ? copy.playbackLogEmpty : copy.playbackLogCount(playbackLog.length, failed);
   if (elements.settingsLogSummary) elements.settingsLogSummary.textContent = summary;
-  if (elements.logSummary) elements.logSummary.textContent = summary;
+  if (!elements.logSummary) return;
+  // The window counts what the filter is showing; the panel keeps the size of
+  // the whole record, which is what the listener opens the window for.
+  const shown = visibleLogEntries().length;
+  elements.logSummary.textContent =
+    logLevelFilter === "all" || playbackLog.length === 0
+      ? summary
+      : copy.playbackLogFilterCount(shown, playbackLog.length);
 }
 
 function initPlaybackLog() {
@@ -3188,6 +3293,9 @@ function initPlaybackLog() {
   elements.logClose?.addEventListener("click", () => closePlaybackLog({ focusToggle: true }));
   elements.logCopy?.addEventListener("click", () => copyPlaybackLog());
   elements.logClear?.addEventListener("click", () => clearPlaybackLog());
+  for (const button of elements.logLevelButtons) {
+    button.addEventListener("click", () => setLogLevelFilter(button.dataset.logLevel));
+  }
   elements.logDialog.addEventListener("click", (event) => {
     // Only the backdrop closes it; a click inside the card belongs to the card.
     if (event.target === elements.logDialog) closePlaybackLog({ focusToggle: true });

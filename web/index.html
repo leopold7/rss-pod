@@ -386,6 +386,19 @@
           <p id="log-title" class="log-title">Playback log</p>
           <p id="log-summary" class="log-summary"></p>
         </div>
+        <!-- A long record is read one level at a time: the window opens on every
+             level and a level is only hidden by an explicit choice. -->
+        <div
+          id="log-filters"
+          class="settings-segment log-filters"
+          role="group"
+          aria-label="Filter by level"
+        >
+          <button type="button" data-log-level="all" aria-pressed="true">All</button>
+          <button type="button" data-log-level="info" aria-pressed="false">INFO</button>
+          <button type="button" data-log-level="warn" aria-pressed="false">WARN</button>
+          <button type="button" data-log-level="error" aria-pressed="false">ERROR</button>
+        </div>
         <ol id="log-entries" class="log-entries" aria-live="off"></ol>
         <div class="log-actions">
           <button id="log-copy" class="log-button" type="button">Copy</button>
