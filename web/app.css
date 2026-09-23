@@ -41,7 +41,6 @@ body {
 }
 
 body {
-  min-width: 720px;
   background:
     radial-gradient(circle at 86% -10%, rgb(155 226 255 / 32%), transparent 34%),
     radial-gradient(circle at 4% 96%, rgb(178 212 255 / 24%), transparent 30%),
@@ -89,6 +88,14 @@ input:focus-visible {
 
 .app-shell > .player-dock {
   grid-row: 4;
+}
+
+/* The shell is one column, and a grid row whose content cannot shrink takes the
+   whole column past the viewport with it -- the shell clips what runs over, so
+   the right edge of every section would be unreachable. Each row keeps the
+   width the viewport gives it and handles its own overflow instead. */
+.app-shell > * {
+  min-width: 0;
 }
 
 .notice-region {
@@ -627,12 +634,21 @@ input:focus-visible {
   height: 22px;
 }
 
+/* The labels are set in nowrap type, so the row can outgrow a tablet however
+   few tabs it lists: it scrolls sideways instead of being squeezed, and the
+   tabs keep their full width rather than running into each other. */
 .date-tabs {
   display: flex;
   align-items: stretch;
   gap: 34px;
   min-height: 66px;
   border-bottom: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.date-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .date-tab {
@@ -641,6 +657,9 @@ input:focus-visible {
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
+  /* The row scrolls, so a tab that does not fit is paged to instead of being
+     shrunk below the label it has to show. */
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 66px;
   padding: 8px 2px 14px;
@@ -698,20 +717,13 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-/* With the display set to categories the same row lists one tab per feed, so it
-   scrolls sideways instead of wrapping when a deployment polls many sources. */
+/* With the display set to categories the same row lists one tab per feed, so a
+   deployment that polls many sources simply has more tabs to page through. */
 .date-tabs.is-category {
   gap: 12px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.date-tabs.is-category::-webkit-scrollbar {
-  display: none;
 }
 
 .date-tabs.is-category .date-tab {
-  flex: 0 0 auto;
   padding-inline: 12px;
 }
 
@@ -1185,7 +1197,10 @@ input:focus-visible {
 .player-dock {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(280px, 1fr) auto;
+  /* The middle track may shrink: a tablet gives the dock less room than its
+     controls ask for at their natural width, and the transport controls and the
+     speed chooser have to keep their place instead of running off the edge. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 24px;
   margin: var(--section-gap) 20px 16px;
@@ -1693,17 +1708,6 @@ input:focus-visible {
     --content-padding: 14px;
     --player-height: calc(174px + env(safe-area-inset-bottom));
     --section-gap: 4px;
-  }
-
-  body {
-    min-width: 0;
-  }
-
-  .page-header,
-  .source-filter-section,
-  .episode-region,
-  .player-dock {
-    min-width: 0;
   }
 
   .page-header {
