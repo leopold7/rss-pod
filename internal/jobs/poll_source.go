@@ -86,7 +86,14 @@ func (w *PollSourceWorker) poll(ctx context.Context, args PollSourceArgs) error 
 	if args.Limit > 0 && args.Limit < configuredLimit {
 		configuredLimit = args.Limit
 	}
-	limit := min(len(feed.Items), configuredLimit)
+	// The filter runs before the per-run limit, so a feed that carries many
+	// articles the source does not want never spends that budget on them.
+	filter, err := source.Filter.Compile()
+	if err != nil {
+		return fmt.Errorf("compile source %s filter: %w", source.ID, err)
+	}
+	items := filterFeedItems(feed.Items, filter)
+	limit := min(len(items), configuredLimit)
 	generation := w.Config.EffectiveGeneration(source)
 	dialogue := w.Config.DialogueProfiles[generation.DialogueProfile]
 
@@ -102,7 +109,7 @@ func (w *PollSourceWorker) poll(ctx context.Context, args PollSourceArgs) error 
 	}
 	itemsNew := 0
 	itemsExisting := 0
-	for _, item := range feed.Items[:limit] {
+	for _, item := range items[:limit] {
 		externalID := feedItemID(source.ID, item)
 		if _, skip := ignored[externalID]; skip {
 			// Deleted by an operator, and not meant to be generated again.
@@ -220,6 +227,18 @@ func ignoredFeedItemIDs(ctx context.Context, tx pgx.Tx, sourceID string) (map[st
 		return nil, fmt.Errorf("iterate ignored feed items: %w", err)
 	}
 	return ignored, nil
+}
+
+// filterFeedItems keeps the items a source filter accepts, in feed order, so a
+// filtered poll still sees the newest wanted articles first.
+func filterFeedItems(items []*gofeed.Item, filter config.ItemFilter) []*gofeed.Item {
+	kept := make([]*gofeed.Item, 0, len(items))
+	for _, item := range items {
+		if filter.Accept(config.FilterItem{Title: item.Title}) {
+			kept = append(kept, item)
+		}
+	}
+	return kept
 }
 
 func feedItemID(sourceID string, item *gofeed.Item) string {

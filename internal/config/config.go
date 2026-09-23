@@ -480,10 +480,133 @@ type SourceConfig struct {
 	LLM        []string          `yaml:"llm" json:"llm,omitempty"`
 	Limits     *LimitsConfig     `yaml:"limits" json:"limits,omitempty"`
 	Podcast    *PodcastConfig    `yaml:"podcast" json:"podcast,omitempty"`
+	// Filter picks the articles a source processes out of a feed that carries
+	// more: a whitelist keeps the matches and a blacklist drops them, and the
+	// two cannot be combined. An absent filter, or one whose list carries no
+	// rules, processes every item.
+	// Filter 用于从内容较多的 feed 中挑选该来源要处理的文章：白名单保留命中的条目，
+	// 黑名单丢弃命中的条目，二者不能同时使用。不配置时，或列表里没有规则时，处理
+	// 全部条目。
+	Filter *SourceFilterConfig `yaml:"filter" json:"filter,omitempty"`
 }
 
 type FeedConfig struct {
 	URL string `yaml:"url" json:"url"`
+}
+
+// FilterRuleTypeTitle matches a rule against the title of a feed item. A new
+// rule type is added by extending FilterItem and the switch in
+// ItemFilter.matches, so a source keeps selecting its articles through one
+// configuration shape.
+const FilterRuleTypeTitle = "title"
+
+// SourceFilterConfig selects the feed items a source processes. At most one of
+// Whitelist and Blacklist may carry rules, because the two lists answer the
+// same question in opposite ways: a whitelist keeps the items its rules match,
+// while a blacklist drops them. A source without a filter, and one whose
+// declared list carries no rules, process every item the feed returns, which
+// makes filtering opt-in.
+type SourceFilterConfig struct {
+	// Whitelist keeps only the items that at least one rule matches, so
+	// requiring several patterns at once means writing one regular expression
+	// for them. An empty list does not filter anything.
+	Whitelist []FilterRuleConfig `yaml:"whitelist" json:"whitelist,omitempty"`
+	// Blacklist drops the items that at least one rule matches and keeps the
+	// rest. An empty list does not filter anything.
+	Blacklist []FilterRuleConfig `yaml:"blacklist" json:"blacklist,omitempty"`
+}
+
+// FilterRuleConfig is one filter rule. Type selects the feed item field that
+// the regular expression runs against, and regex is matched unanchored, so the
+// pattern only has to appear somewhere inside that field.
+type FilterRuleConfig struct {
+	Type  string `yaml:"type" json:"type"`
+	Regex string `yaml:"regex" json:"regex"`
+}
+
+// FilterItem carries the feed item fields that filter rules can read.
+type FilterItem struct {
+	Title string
+}
+
+// ItemFilter is a compiled SourceFilterConfig. Its zero value accepts every
+// item, so a source without a filter needs no special case.
+type ItemFilter struct {
+	// whitelist tells which list the rules came from, because it decides
+	// whether a match keeps an item or drops it.
+	whitelist bool
+	rules     []compiledFilterRule
+}
+
+type compiledFilterRule struct {
+	ruleType string
+	regex    *regexp.Regexp
+}
+
+// Compile resolves the configured rules, including their regular expressions,
+// so matching an item stays a plain regular expression call. A nil config, and
+// a config whose lists carry no rules, compile into the zero filter, which
+// accepts everything.
+func (c *SourceFilterConfig) Compile() (ItemFilter, error) {
+	if c == nil {
+		return ItemFilter{}, nil
+	}
+	if len(c.Whitelist) > 0 && len(c.Blacklist) > 0 {
+		return ItemFilter{}, errors.New("whitelist and blacklist cannot be used together")
+	}
+	// An empty list is what an unset key and an explicitly empty one both
+	// resolve to, so only the list that carries rules reaches the loop below,
+	// and its name keeps the error messages pointing at the configured key.
+	whitelist := len(c.Whitelist) > 0
+	name, list := "blacklist", c.Blacklist
+	if whitelist {
+		name, list = "whitelist", c.Whitelist
+	}
+	if len(list) == 0 {
+		return ItemFilter{}, nil
+	}
+	rules := make([]compiledFilterRule, 0, len(list))
+	for i, rule := range list {
+		ruleType := strings.ToLower(strings.TrimSpace(rule.Type))
+		if ruleType != FilterRuleTypeTitle {
+			return ItemFilter{}, fmt.Errorf("%s[%d].type must be %q, got %q", name, i, FilterRuleTypeTitle, rule.Type)
+		}
+		pattern := strings.TrimSpace(rule.Regex)
+		if pattern == "" {
+			return ItemFilter{}, fmt.Errorf("%s[%d].regex must not be empty", name, i)
+		}
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			return ItemFilter{}, fmt.Errorf("%s[%d].regex: %w", name, i, err)
+		}
+		rules = append(rules, compiledFilterRule{ruleType: ruleType, regex: compiled})
+	}
+	return ItemFilter{whitelist: whitelist, rules: rules}, nil
+}
+
+// Accept reports whether an item passes the filter and continues through the
+// pipeline. A filter without rules accepts every item.
+func (f ItemFilter) Accept(item FilterItem) bool {
+	if len(f.rules) == 0 {
+		return true
+	}
+	if f.whitelist {
+		return f.matches(item)
+	}
+	return !f.matches(item)
+}
+
+// matches reports whether at least one rule matches the item.
+func (f ItemFilter) matches(item FilterItem) bool {
+	for _, rule := range f.rules {
+		switch rule.ruleType {
+		case FilterRuleTypeTitle:
+			if rule.regex.MatchString(item.Title) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SubscriptionConfig mirrors another rss-pod deployment. Instead of reading a
@@ -848,6 +971,9 @@ func (c *Config) Validate() error {
 		}
 		if err := validateContent(source.ID, content, c.Services.Content); err != nil {
 			return err
+		}
+		if _, err := source.Filter.Compile(); err != nil {
+			return fmt.Errorf("source %s filter: %w", source.ID, err)
 		}
 		if len(source.LLM) > 0 {
 			if err := validateServiceReferences("source "+source.ID+" llm", source.LLM, c.Services.LLM); err != nil {

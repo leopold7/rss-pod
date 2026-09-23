@@ -11,12 +11,17 @@ Compared with the upstream project, this fork adds the following features:
   The upside is that you can follow a large number of feeds and decide for
   yourself which article you want to listen to
 - **Listen later**: long-press an episode to add it to "Listen later", which is
-  shown as its own category, and can be removed automatically after playing
+  shown as its own category, can be removed automatically after playing, and can
+  be cleared in one step
 - **Dim listened episodes**: already-listened episodes can be dimmed by title to
   mark them as heard
 - **Local cache**: automatically preload the next episode
 - **Default category**: open the page directly in a specific category
+- **First category**: choose whether the shared first category lists every feed
+  or the episodes saved for later
 - **Player**: marquee title, plus a collapsible drawer
+- **Article filter**: whitelist or blacklist the articles of a source by title
+  regular expression
 - **CLI**: additional delete and retry commands
 
 
@@ -286,6 +291,43 @@ sources:
 The default keeps the automatic pipeline. Because the player only shows the last
 three days, waiting entries older than that are started with
 `rss-pod start --sources all`.
+
+### Article filter
+
+A source can pick the articles it wants out of a feed that carries more. Under
+`filter`, declare either a `whitelist` or a `blacklist`, never both, because
+validation rejects a source that declares rules in the two at once. Every rule
+names the field it reads, which is only `title` today, and a regular expression
+for it. An item matching at least one rule counts as a match, and the pattern is
+unanchored, so `财新|独家` matches every title that contains either word: a
+whitelist keeps the matching items, a blacklist drops them.
+
+```yaml
+sources:
+  - id: caixinwang
+    filter:
+      # Keep only the articles whose title mentions 财新 or 独家
+      whitelist:
+        - type: title
+          regex: "财新|独家"
+```
+
+```yaml
+sources:
+  - id: caixinwang
+    filter:
+      # Drop the articles whose title mentions 人事观察
+      blacklist:
+        - type: title
+          regex: "人事观察"
+```
+
+A source without a `filter`, and a filter whose declared list carries no rules,
+processes every item the feed returns, so filtering stays opt-in. The filter
+runs before the per-run limit `max_feed_items_per_run`, so that budget is spent
+on the articles the source wants only. `check` reports an unsupported rule type,
+a regular expression that does not compile, and a source that uses the whitelist
+and the blacklist together.
 
 ### Subscriptions
 

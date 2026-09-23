@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmcdole/gofeed"
 	"github.com/riverqueue/river"
 
 	"github.com/synrise25/rss-pod/internal/config"
@@ -799,6 +800,46 @@ func TestPollSubscriptionRejectsUnknownResponseBody(t *testing.T) {
 		time.Now().Add(-time.Hour), time.Now(), 10,
 	); err == nil || !strings.Contains(err.Error(), "decode subscription peer response") {
 		t.Fatalf("fetchEpisodes() error = %v, want a decode error", err)
+	}
+}
+
+// The poll applies the filter before the per-run limit, so the kept items have
+// to stay in feed order for the newest wanted articles to be processed first.
+func TestFilterFeedItemsKeepsMatchingItemsInOrder(t *testing.T) {
+	items := []*gofeed.Item{
+		{Title: "财新周刊封面"},
+		{Title: "人事观察：某省调整"},
+		{Title: "财新独家"},
+	}
+
+	whitelist, err := (&config.SourceFilterConfig{Whitelist: []config.FilterRuleConfig{
+		{Type: config.FilterRuleTypeTitle, Regex: "财新"},
+	}}).Compile()
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	kept := filterFeedItems(items, whitelist)
+	if len(kept) != 2 || kept[0].Title != "财新周刊封面" || kept[1].Title != "财新独家" {
+		t.Fatalf("filterFeedItems() with a whitelist = %#v", kept)
+	}
+
+	blacklist, err := (&config.SourceFilterConfig{Blacklist: []config.FilterRuleConfig{
+		{Type: config.FilterRuleTypeTitle, Regex: "人事观察"},
+	}}).Compile()
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	kept = filterFeedItems(items, blacklist)
+	if len(kept) != 2 || kept[0].Title != "财新周刊封面" || kept[1].Title != "财新独家" {
+		t.Fatalf("filterFeedItems() with a blacklist = %#v", kept)
+	}
+
+	unfiltered, err := (*config.SourceFilterConfig)(nil).Compile()
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if got := filterFeedItems(items, unfiltered); len(got) != len(items) {
+		t.Fatalf("filterFeedItems() without a filter kept %d items, want %d", len(got), len(items))
 	}
 }
 

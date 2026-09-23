@@ -153,6 +153,163 @@ func TestPollOnlySourceIDsSkipsDisabledSources(t *testing.T) {
 	}
 }
 
+func TestLoadSourceFilter(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter string
+		titles map[string]bool
+	}{
+		{
+			name: "whitelist keeps the matches",
+			filter: "    filter:\n      whitelist:\n        - {type: title, regex: \"财新|独家\"}\n" +
+				"        - {type: Title, regex: \"深度\"}",
+			titles: map[string]bool{
+				"财新周刊封面":   true,
+				"某公司的独家消息": true,
+				"深度报道":     true,
+				"今日要闻":     false,
+				"":         false,
+			},
+		},
+		{
+			name:   "blacklist drops the matches",
+			filter: "    filter:\n      blacklist:\n        - {type: title, regex: \"人事观察\"}",
+			titles: map[string]bool{
+				// The pattern only has to appear somewhere in the title.
+				"本周人事观察汇总": false,
+				"财新周刊封面":   true,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := strings.Replace(minimalConfig, "    feed: {url: http://localhost/feed.xml}",
+				"    feed: {url: http://localhost/feed.xml}\n"+test.filter, 1)
+			if data == minimalConfig {
+				t.Fatal("test fixture does not contain the source feed")
+			}
+			cfg, err := Load(writeConfig(t, data))
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			source, ok := cfg.Source("test")
+			if !ok || source.Filter == nil {
+				t.Fatalf("source filter was not decoded: %#v", source.Filter)
+			}
+			filter, err := source.Filter.Compile()
+			if err != nil {
+				t.Fatalf("Compile() error = %v", err)
+			}
+			for title, want := range test.titles {
+				if got := filter.Accept(FilterItem{Title: title}); got != want {
+					t.Errorf("Accept(%q) = %v, want %v", title, got, want)
+				}
+			}
+		})
+	}
+}
+
+// A source without a filter, and a filter whose declared list carries no rules,
+// must keep the pipeline unchanged instead of dropping every item.
+func TestSourceFilterAcceptsEverythingWhenUnconfigured(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		filter *SourceFilterConfig
+	}{
+		{name: "absent filter", filter: nil},
+		{name: "empty filter", filter: &SourceFilterConfig{}},
+		{name: "empty whitelist", filter: &SourceFilterConfig{Whitelist: []FilterRuleConfig{}}},
+		{name: "empty blacklist", filter: &SourceFilterConfig{Blacklist: []FilterRuleConfig{}}},
+		{name: "both lists declared empty", filter: &SourceFilterConfig{
+			Whitelist: []FilterRuleConfig{},
+			Blacklist: []FilterRuleConfig{},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			filter, err := test.filter.Compile()
+			if err != nil {
+				t.Fatalf("Compile() error = %v", err)
+			}
+			if !filter.Accept(FilterItem{Title: "任意标题"}) {
+				t.Fatal("an unconfigured filter dropped an item")
+			}
+		})
+	}
+}
+
+func TestValidateSourceFilter(t *testing.T) {
+	tests := []struct {
+		name    string
+		filter  string
+		wantErr string
+	}{
+		{
+			name:   "valid whitelist",
+			filter: "    filter:\n      whitelist:\n        - {type: title, regex: \"财新\"}\n        - {type: TITLE, regex: \"独家\"}",
+		},
+		{
+			name:   "valid blacklist",
+			filter: "    filter:\n      blacklist:\n        - {type: title, regex: \"人事观察\"}",
+		},
+		{
+			// An empty list holds no rules, so it filters nothing and does not
+			// count as using both lists at once.
+			name:   "an empty list next to the other one",
+			filter: "    filter:\n      whitelist: []\n      blacklist:\n        - {type: title, regex: \"人事观察\"}",
+		},
+		{
+			name: "whitelist and blacklist together",
+			filter: "    filter:\n      whitelist:\n        - {type: title, regex: \"财新\"}\n" +
+				"      blacklist:\n        - {type: title, regex: \"人事观察\"}",
+			wantErr: "source test filter: whitelist and blacklist cannot be used together",
+		},
+		{
+			name:    "unknown rule type",
+			filter:  "    filter:\n      blacklist:\n        - {type: link, regex: \"caixin\"}",
+			wantErr: `source test filter: blacklist[0].type must be "title", got "link"`,
+		},
+		{
+			name:    "missing rule type",
+			filter:  "    filter:\n      whitelist:\n        - {regex: \"caixin\"}",
+			wantErr: "whitelist[0].type must be",
+		},
+		{
+			name:    "empty regex",
+			filter:  "    filter:\n      blacklist:\n        - {type: title, regex: \"   \"}",
+			wantErr: "blacklist[0].regex must not be empty",
+		},
+		{
+			name:    "missing regex",
+			filter:  "    filter:\n      whitelist:\n        - {type: title}",
+			wantErr: "whitelist[0].regex must not be empty",
+		},
+		{
+			name:    "invalid regex reports its rule",
+			filter:  "    filter:\n      whitelist:\n        - {type: title, regex: \"ok\"}\n        - {type: title, regex: \"[unclosed\"}",
+			wantErr: "whitelist[1].regex",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := strings.Replace(minimalConfig, "    feed: {url: http://localhost/feed.xml}",
+				"    feed: {url: http://localhost/feed.xml}\n"+test.filter, 1)
+			if data == minimalConfig {
+				t.Fatal("test fixture does not contain the source feed")
+			}
+			_, err := Load(writeConfig(t, data))
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Load() error = %v, want containing %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestEpisodeSourcesOrder(t *testing.T) {
 	order := func(value int) *int { return &value }
 	tests := []struct {

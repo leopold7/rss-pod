@@ -294,6 +294,32 @@ sources:
       # Replace with your own RSS or RSSHub endpoint.
       # 请替换为自己的 RSS 或 RSSHub 地址。
       url: https://rsshub.example.com/zhihu/daily
+    # filter picks the articles this source processes out of a busy feed. Each
+    # rule names the field it reads and a regular expression for it; title is
+    # currently the only rule type, an item matching at least one rule counts as
+    # a match, and the pattern is unanchored, so "AI|人工智能" matches every
+    # title that contains either word. whitelist keeps the matching items and
+    # blacklist drops them; declare at most one of the two, because using both
+    # is rejected. The whole block is optional and empty lists filter nothing.
+    # The filter runs before limits.max_feed_items_per_run, so that budget is
+    # only spent on the articles this source wants.
+    # filter 用于从内容较多的 feed 中挑选该来源要处理的文章。每条规则声明它读取的字段
+    # 和对应的正则表达式，目前只有 title 一种规则类型；命中任意一条规则即算匹配，正则
+    # 不加锚点，"AI|人工智能" 会匹配标题里出现任意一个词的条目。whitelist 保留命中的
+    # 条目，blacklist 丢弃命中的条目；两者只能声明一个，同时使用会被校验拒绝。整块是
+    # 可选的，声明了空列表则不进行过滤。过滤在 limits.max_feed_items_per_run 之前生效，
+    # 因此每轮额度只花在该来源想要的文章上。
+    # filter:
+    #   # 只保留标题含“人工智能”或“AI”的文章。
+    #   # Keep only the articles whose title mentions AI.
+    #   whitelist:
+    #     - type: title
+    #       regex: "人工智能|AI"
+    #   # 或者改为丢弃命中规则的文章，两者不能同时使用。
+    #   # Or drop the matching articles instead; the two cannot be combined.
+    #   blacklist:
+    #     - type: title
+    #       regex: "人事观察"
     schedule:
       cron: "50 21 * * *"
     generation:

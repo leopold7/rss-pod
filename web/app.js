@@ -6,6 +6,7 @@ const THEME_MODES = ["system", "light", "dark"];
 const DISPLAY_KEY = "rss-pod.display-mode";
 const DISPLAY_MODES = ["date", "category"];
 const DEFAULT_CATEGORY_KEY = "rss-pod.default-category";
+const FIRST_VIEW_KEY = "rss-pod.first-view";
 const PLAYER_DRAWER_KEY = "rss-pod.player-drawer";
 const PLAYER_DRAWER_MODES = ["expanded", "collapsed"];
 const LISTEN_LATER_KEY = "rss-pod.listen-later";
@@ -63,6 +64,8 @@ const ICON_RETRY =
 const ICON_BOOKMARK =
   "m480-240-196 84q-30 13-57-4.76-27-17.75-27-50.24v-574q0-24 18-42t42-18h440q24 0 42 18t18 42v574q0 32.49-27 50.24Q706-143 676-156l-196-84Zm0-64 220 93v-574H260v574l220-93Zm0-481H260h440-220Z";
 const ICON_CHECK = "M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z";
+const ICON_TRASH =
+  "M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm80-120h80v-400h-80v400Zm160 0h80v-400h-80v400Z";
 const ICON_CHEVRON_DOWN =
   "M469-358q-5-2-10-7L261-563q-9-9-8.5-21.5T262-606q9-9 21.5-9t21.5 9l175 176 176-176q9-9 21-8.5t21 9.5q9 9 9 21.5t-9 21.5L501-365q-5 5-10 7t-11 2q-6 0-11-2Z";
 
@@ -85,6 +88,7 @@ const copy = {
     displaySettingLabel: "Layout",
     displayModes: { date: "By date", category: "By feed" },
     categorySettingLabel: "Default category",
+    firstViewSettingLabel: "First category shows",
     categoryTabsLabel: "Choose a feed",
     dateTabsLabel: "Choose a date",
     carouselRole: "carousel",
@@ -150,9 +154,17 @@ const copy = {
     cacheEmpty: "Nothing cached yet",
     cacheSummary: (size, count) => `Cached ${size} (${count} ${count === 1 ? "episode" : "episodes"})`,
     cacheSummaryUnknown: (count) => `Cached ${count} ${count === 1 ? "episode" : "episodes"} (size unavailable)`,
+    cacheClearConfirmMessage: (count) =>
+      `This removes ${count} locally cached ${count === 1 ? "episode" : "episodes"} from this device. They download again when played.`,
     addListenLater: "Save for later",
     removeListenLater: "Remove from Listen later",
+    clearAllLater: "Clear all Listen later",
     laterAdded: "Saved for later",
+    laterCleared: "Listen later cleared",
+    laterClearConfirmMessage: (count) =>
+      `This removes ${count} saved ${count === 1 ? "episode" : "episodes"} from this device, and cannot be undone.`,
+    confirmCancel: "Cancel",
+    confirmClear: "Clear",
     laterUnavailable: "This one cannot be started here",
     playbackFailed: "Could not play that episode. Playback paused.",
     menuDownload: "Download",
@@ -188,6 +200,7 @@ const copy = {
     displaySettingLabel: "显示设置",
     displayModes: { date: "按日期", category: "按分类" },
     categorySettingLabel: "默认分类",
+    firstViewSettingLabel: "首个分类显示",
     categoryTabsLabel: "选择分类",
     dateTabsLabel: "选择日期",
     carouselRole: "轮播",
@@ -253,9 +266,16 @@ const copy = {
     cacheEmpty: "还没有本地缓存",
     cacheSummary: (size, count) => `已缓存 ${size}（${count} 条）`,
     cacheSummaryUnknown: (count) => `已缓存 ${count} 条（大小不可用）`,
+    cacheClearConfirmMessage: (count) => `将从本机移除全部 ${count} 条已缓存的内容，播放时会重新下载。`,
     addListenLater: "稍后在听",
     removeListenLater: "取消稍后在听",
+    clearAllLater: "清空全部稍后在听",
     laterAdded: "已加入稍后在听",
+    laterCleared: "已清空稍后在听",
+    laterClearConfirmMessage: (count) =>
+      `将从本机移除全部 ${count} 条稍后在听的内容，且无法恢复。`,
+    confirmCancel: "取消",
+    confirmClear: "清空",
     laterUnavailable: "该条目无法在这里开始下载",
     playbackFailed: "这一条无法播放，已暂停",
     menuDownload: "下载",
@@ -333,6 +353,8 @@ const elements = {
   settingsDisplayLabel: document.querySelector("#settings-display-label"),
   settingsCategoryLabel: document.querySelector("#settings-category-label"),
   settingsCategorySelect: document.querySelector("#settings-default-category"),
+  settingsFirstViewLabel: document.querySelector("#settings-first-view-label"),
+  settingsFirstViewSelect: document.querySelector("#settings-first-view"),
   settingsPersonalLabel: document.querySelector("#settings-personal-label"),
   laterGroupLabel: document.querySelector("#settings-later-group-label"),
   otherGroupLabel: document.querySelector("#settings-other-group-label"),
@@ -346,10 +368,16 @@ const elements = {
   preloadNextToggle: document.querySelector("#settings-preload"),
   cacheSummary: document.querySelector("#settings-cache-summary"),
   cacheClear: document.querySelector("#settings-cache-clear"),
+  laterClear: document.querySelector("#settings-later-clear"),
   settingsDiagnosticsLabel: document.querySelector("#settings-diagnostics-label"),
   settingsLogOpen: document.querySelector("#settings-log-open"),
   settingsLogSummary: document.querySelector("#settings-log-summary"),
   logDialog: document.querySelector("#log-dialog"),
+  confirmDialog: document.querySelector("#confirm-dialog"),
+  confirmTitle: document.querySelector("#confirm-title"),
+  confirmMessage: document.querySelector("#confirm-message"),
+  confirmCancel: document.querySelector("#confirm-cancel"),
+  confirmAccept: document.querySelector("#confirm-accept"),
   logTitle: document.querySelector("#log-title"),
   logSummary: document.querySelector("#log-summary"),
   logFilters: document.querySelector("#log-filters"),
@@ -401,10 +429,13 @@ let themePreference = readThemePreference();
 // The list groups by day unless the listener picked categories in the settings
 // panel. Both choices live in this browser for the current site.
 let displayMode = readDisplayPreference();
-// The feed the list opens on. It is applied to the first payload of the page,
-// so a later poll never pulls a listener back after they swiped elsewhere.
+// The feed the list opens on, and what the shared first tab lists. Both are
+// applied to the first payload of the page, so a later poll never pulls a
+// listener back after they swiped elsewhere. The first tab is read first, since
+// a default category saved before it existed migrates into it there.
+let firstView = readFirstViewPreference();
 let defaultCategory = readDefaultCategoryPreference();
-let defaultCategoryApplied = false;
+let initialViewApplied = false;
 // The player dock folds into a drawer so the list can take the screen back.
 let playerDrawer = readPlayerDrawerPreference();
 // The episodes saved for later and the ones already played through live in this
@@ -443,6 +474,7 @@ applyLocale();
 initTheme();
 initSettings();
 initPlayerDrawer();
+initConfirmDialog();
 
 const dateOptions = createDateOptions();
 const state = {
@@ -464,6 +496,7 @@ const state = {
 const slider = initEpisodeSlider();
 
 renderCategorySetting();
+renderFirstViewSetting();
 updateGreeting();
 window.setInterval(updateGreeting, 60_000);
 document.addEventListener("visibilitychange", () => {
@@ -597,24 +630,20 @@ function applyPayload(payload) {
     .map(normalizeEpisode)
     .filter((episode) => episode.id && (episode.audioURL !== "" || episode.state !== "ready"))
     .sort((a, b) => b.sortTime - a.sortTime);
-  applyDefaultCategory();
+  applyInitialView();
   renderCategorySetting();
+  renderFirstViewSetting();
   syncListenLaterSnapshots();
 }
 
-// The default feed only applies to the first payload of the page: a poll that
-// lands later has to leave the page the listener swiped to alone.
-function applyDefaultCategory() {
-  if (defaultCategoryApplied) return;
-  defaultCategoryApplied = true;
-  // The saved list is not a feed: it opens the shared first tab on it instead
-  // of selecting a source of its own.
-  if (defaultCategory === LATER_SLOT) {
-    primaryView = LATER_SLOT;
-    state.activeSource = "all";
-    return;
-  }
-  primaryView = "all";
+// The opening view only applies to the first payload of the page: a poll that
+// lands later has to leave the page the listener swiped to alone. The default
+// feed picks the slot and the first tab keeps its own display choice, so the
+// two settings never overwrite each other.
+function applyInitialView() {
+  if (initialViewApplied) return;
+  initialViewApplied = true;
+  primaryView = firstView;
   state.activeSource = resolveCategory(defaultCategory);
 }
 
@@ -2100,6 +2129,7 @@ function applyLocale() {
   elements.settingsThemeLabel.textContent = copy.themeSettingLabel;
   elements.settingsDisplayLabel.textContent = copy.displaySettingLabel;
   elements.settingsCategoryLabel.textContent = copy.categorySettingLabel;
+  elements.settingsFirstViewLabel.textContent = copy.firstViewSettingLabel;
   elements.settingsPersonalLabel.textContent = copy.personalSettingLabel;
   elements.laterGroupLabel.textContent = copy.laterGroupLabel;
   elements.otherGroupLabel.textContent = copy.otherGroupLabel;
@@ -2108,6 +2138,7 @@ function applyLocale() {
   elements.dimListenedLabel.textContent = copy.dimListenedLabel;
   elements.preloadNextLabel.textContent = copy.preloadNextLabel;
   elements.cacheClear.textContent = copy.clearCache;
+  elements.laterClear.textContent = copy.clearAllLater;
   elements.settingsDiagnosticsLabel.textContent = copy.playbackLogLabel;
   elements.settingsLogOpen.textContent = copy.playbackLogAction;
   elements.logTitle.textContent = copy.playbackLogTitle;
@@ -2173,6 +2204,17 @@ function readDefaultCategoryPreference() {
   return readStoredString(DEFAULT_CATEGORY_KEY) || "all";
 }
 
+// A default category that asked for the saved list predates this setting, so it
+// moves over to it and the page still opens the way it always did. "all" is
+// both the default and the absence of a stored choice.
+function readFirstViewPreference() {
+  if (readStoredString(DEFAULT_CATEGORY_KEY) === LATER_SLOT) {
+    removeStorage(DEFAULT_CATEGORY_KEY);
+    writeStorage(FIRST_VIEW_KEY, LATER_SLOT);
+  }
+  return readStoredString(FIRST_VIEW_KEY) === LATER_SLOT ? LATER_SLOT : "all";
+}
+
 function readPlayerDrawerPreference() {
   const stored = readStoredString(PLAYER_DRAWER_KEY);
   return PLAYER_DRAWER_MODES.includes(stored) ? stored : "expanded";
@@ -2234,6 +2276,11 @@ function initSettings() {
       setDefaultCategory(elements.settingsCategorySelect.value),
     );
   }
+  if (elements.settingsFirstViewSelect) {
+    elements.settingsFirstViewSelect.addEventListener("change", () =>
+      setFirstView(elements.settingsFirstViewSelect.value),
+    );
+  }
   initPersonalSettings();
   initPlaybackLog();
   renderDisplaySettings();
@@ -2270,54 +2317,68 @@ function renderDisplaySettings() {
 
 // The default feed is a dropdown rather than a segmented control, because a
 // deployment can follow more feeds than would fit in one row. Its options repeat
-// the header tabs, "all" first, so both read in the same order.
-// The dropdown repeats the feed row and adds the saved list, which the shared
-// first tab can show in place of "all".
+// the feed row, "all" first, so both read in the same order.
 function defaultCategoryChoices() {
+  return [{ id: "all", name: copy.allSources }, ...state.sources];
+}
+
+// The shared first tab lists every feed or the episodes saved on this device,
+// which is a choice of its own rather than a feed to open on.
+function firstViewChoices() {
   return [
     { id: "all", name: copy.allSources },
     { id: LATER_SLOT, name: copy.listenLater },
-    ...state.sources,
   ];
+}
+
+function createSettingOption(choice) {
+  const option = document.createElement("option");
+  option.value = choice.id;
+  option.textContent = choice.name;
+  return option;
 }
 
 function renderCategorySetting() {
   const select = elements.settingsCategorySelect;
   if (!select) return;
-  const options = defaultCategoryChoices().map((choice) => {
-    const option = document.createElement("option");
-    option.value = choice.id;
-    option.textContent = choice.name;
-    return option;
-  });
-  select.replaceChildren(...options);
+  select.replaceChildren(...defaultCategoryChoices().map(createSettingOption));
   select.value = resolveCategory(defaultCategory);
 }
 
-// A feed the deployment no longer follows falls back to the whole list; the
-// saved list is a choice of its own rather than a feed.
+function renderFirstViewSetting() {
+  const select = elements.settingsFirstViewSelect;
+  if (!select) return;
+  select.replaceChildren(...firstViewChoices().map(createSettingOption));
+  select.value = firstView;
+}
+
+// A feed the deployment no longer follows falls back to the whole list.
 function resolveCategory(sourceID) {
-  if (sourceID === LATER_SLOT) return LATER_SLOT;
   return sourceChoices().some((choice) => choice.id === sourceID) ? sourceID : "all";
 }
 
 // Picking a feed stores it and shows it right away, so the panel previews what
-// the next visit will open on. The saved list works in either layout, so it
-// needs no layout of its own.
+// the next visit will open on. The first tab keeps its own setting, so this
+// never changes what the shared tab lists.
 function setDefaultCategory(sourceID) {
   defaultCategory = resolveCategory(sourceID);
   // An explicit pick is the current choice as well, so the first payload must
   // not override it.
-  defaultCategoryApplied = true;
+  initialViewApplied = true;
   if (defaultCategory === "all") removeStorage(DEFAULT_CATEGORY_KEY);
   else writeStorage(DEFAULT_CATEGORY_KEY, defaultCategory);
   renderCategorySetting();
-  if (defaultCategory === LATER_SLOT) {
-    setPrimaryView(LATER_SLOT);
-    return;
-  }
-  setPrimaryView("all");
   selectSlot({ source: defaultCategory });
+}
+
+// The first tab works in either layout, so switching what it lists previews the
+// choice right away without touching the slot the listener is on.
+function setFirstView(view) {
+  firstView = view === LATER_SLOT ? LATER_SLOT : "all";
+  if (firstView === "all") removeStorage(FIRST_VIEW_KEY);
+  else writeStorage(FIRST_VIEW_KEY, firstView);
+  renderFirstViewSetting();
+  setPrimaryView(firstView);
 }
 
 // The dock doubles as a drawer: folding it away hands the rows it used back to
@@ -2654,6 +2715,31 @@ function toggleListenLater(episode) {
   startLaterDownload(episode);
 }
 
+// Clearing the list takes every saved record at once. An episode that is playing
+// keeps playing; it only stops being one of the saved ones.
+function clearListenLater() {
+  listenLater = [];
+  writeListenLaterRecords(listenLater);
+  renderAll();
+  showToast(copy.laterCleared);
+}
+
+// Both entry points -- the panel and the row menu -- ask first, because the
+// action drops everything the listener saved. An empty list has nothing to ask
+// about and says so instead.
+function confirmClearListenLater() {
+  if (listenLater.length === 0) {
+    showToast(copy.emptyLater);
+    return;
+  }
+  openConfirmDialog({
+    title: copy.clearAllLater,
+    message: copy.laterClearConfirmMessage(listenLater.length),
+    acceptLabel: copy.confirmClear,
+    onAccept: clearListenLater,
+  });
+}
+
 // Saving an episode that has no audio yet is a request for it, so the download
 // starts right away. Only a poll-only source can be started from the player;
 // everything else already runs through the automatic pipeline.
@@ -2907,7 +2993,8 @@ function openEpisodeMenu(episode, { x = null, y = null, anchor = null } = {}) {
 
 // The first item mirrors the row control: it plays what is ready, starts or
 // retries a download, and reports the stage of one that is already running. The
-// second item always offers the saved-for-later toggle.
+// second item always offers the saved-for-later toggle. The saved page adds the
+// one action that belongs to the page rather than to the row.
 function episodeMenuItems(episode) {
   const id = episode.id;
   const items = [];
@@ -2939,6 +3026,15 @@ function episodeMenuItems(episode) {
     checked: inListenLater(id),
     onSelect: () => toggleListenLater(findEpisode(id) || episode),
   });
+  // A row of the saved page speaks for the whole list as well, which is the one
+  // place where clearing it belongs.
+  if (showsListenLater(activeSlot())) {
+    items.push({
+      label: copy.clearAllLater,
+      icon: ICON_TRASH,
+      onSelect: () => confirmClearListenLater(),
+    });
+  }
   return items;
 }
 
@@ -3100,6 +3196,22 @@ function clearAudioCache() {
   showToast(copy.cacheCleared);
 }
 
+// The panel asks before the cache is dropped, because what it holds is what
+// plays back without a network. An empty cache has nothing to ask about.
+function confirmClearAudioCache() {
+  const totals = cachedTotals();
+  if (totals.count === 0) {
+    showToast(copy.cacheEmpty);
+    return;
+  }
+  openConfirmDialog({
+    title: copy.clearCache,
+    message: copy.cacheClearConfirmMessage(totals.count),
+    acceptLabel: copy.confirmClear,
+    onAccept: clearAudioCache,
+  });
+}
+
 // The audio of one entry is only ever used through its object URL, so the
 // cached bytes are what plays back without asking the network again.
 function audioSourceFor(episode) {
@@ -3134,7 +3246,8 @@ function initPersonalSettings() {
   elements.preloadNextToggle?.addEventListener("click", () =>
     setPersonalFlag("preloadNext", !preloadNext),
   );
-  elements.cacheClear?.addEventListener("click", () => clearAudioCache());
+  elements.cacheClear?.addEventListener("click", () => confirmClearAudioCache());
+  elements.laterClear?.addEventListener("click", () => confirmClearListenLater());
   renderPersonalSettings();
 }
 
@@ -3443,6 +3556,53 @@ function clearPlaybackLog() {
   removeStorage(AUDIO_LOG_KEY);
   renderPlaybackLog();
   showToast(copy.playbackLogCleared);
+}
+
+// ---- The confirmation window ----
+
+// A choice that cannot be undone is asked about in a window of its own: it takes
+// the question and the answer from the caller, so the action it runs is the one
+// the caller handed over rather than one this window knows about.
+let confirmAcceptHandler = null;
+
+function initConfirmDialog() {
+  if (!elements.confirmDialog) return;
+  elements.confirmCancel?.addEventListener("click", () => closeConfirmDialog());
+  elements.confirmAccept?.addEventListener("click", () => {
+    const accept = confirmAcceptHandler;
+    // The window closes before the action runs, so the action redraws the page
+    // under an overlay that is already gone.
+    closeConfirmDialog();
+    accept?.();
+  });
+  elements.confirmDialog.addEventListener("click", (event) => {
+    // Only the backdrop closes it; a click inside the card belongs to the card.
+    if (event.target === elements.confirmDialog) closeConfirmDialog();
+  });
+  // Escape is taken from the document rather than the window, because a click
+  // inside it leaves the focus on the body.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || elements.confirmDialog.hidden) return;
+    closeConfirmDialog();
+  });
+}
+
+function openConfirmDialog({ title, message, acceptLabel, onAccept }) {
+  if (!elements.confirmDialog) return;
+  confirmAcceptHandler = onAccept;
+  elements.confirmTitle.textContent = title;
+  elements.confirmMessage.textContent = message;
+  elements.confirmCancel.textContent = copy.confirmCancel;
+  elements.confirmAccept.textContent = acceptLabel;
+  elements.confirmDialog.hidden = false;
+  // The answer is the last thing read, so it is where the focus starts.
+  elements.confirmAccept.focus({ preventScroll: true });
+}
+
+function closeConfirmDialog() {
+  if (!elements.confirmDialog) return;
+  elements.confirmDialog.hidden = true;
+  confirmAcceptHandler = null;
 }
 
 // ---- The now playing title ----

@@ -555,7 +555,10 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.settings-cache-clear {
+/* The actions that sit at the end of a group in the panel -- clearing the cache
+   and clearing the saved list -- share one look. */
+.settings-cache-clear,
+.settings-later-clear {
   width: 100%;
   margin-top: 8px;
   padding: 9px 10px;
@@ -568,13 +571,15 @@ input:focus-visible {
   font-weight: 700;
 }
 
-.settings-cache-clear:hover {
+.settings-cache-clear:hover,
+.settings-later-clear:hover {
   border-color: rgb(117 175 237 / 72%);
   background: var(--surface-blue);
   color: var(--blue-hover);
 }
 
-.settings-cache-clear:focus-visible {
+.settings-cache-clear:focus-visible,
+.settings-later-clear:focus-visible {
   outline: 4px solid var(--focus);
   outline-offset: 2px;
 }
@@ -2174,13 +2179,15 @@ input:focus-visible {
   box-shadow: 0 2px 6px rgb(0 0 0 / 38%);
 }
 
-:root[data-theme="dark"] .settings-cache-clear {
+:root[data-theme="dark"] .settings-cache-clear,
+:root[data-theme="dark"] .settings-later-clear {
   border-color: rgb(80 116 160 / 52%);
   background: rgb(255 255 255 / 8%);
   color: var(--navy);
 }
 
-:root[data-theme="dark"] .settings-cache-clear:hover {
+:root[data-theme="dark"] .settings-cache-clear:hover,
+:root[data-theme="dark"] .settings-later-clear:hover {
   border-color: rgb(110 168 251 / 58%);
   background: rgb(110 168 251 / 16%);
 }
@@ -2647,6 +2654,21 @@ input:focus-visible {
   background: var(--surface-solid);
   box-shadow: 0 24px 60px rgb(16 35 63 / 32%);
   animation: popup-menu-in 140ms ease-out;
+}
+
+/* The confirm window reuses the log card: it is narrower, and the question it
+   asks sits under the title instead of beside it. */
+.confirm-card {
+  max-width: 420px;
+}
+
+.confirm-card .log-head {
+  display: block;
+}
+
+.confirm-card .log-summary {
+  margin-top: 8px;
+  line-height: 1.5;
 }
 
 .log-head {

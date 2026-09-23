@@ -105,6 +105,16 @@
                     aria-labelledby="settings-category-label"
                   ></select>
                 </section>
+                <!-- What the shared first tab lists is kept apart from the feed
+                     the page opens on, so the two never fight over the tab. -->
+                <section id="settings-first-view-section" class="settings-section">
+                  <p id="settings-first-view-label" class="settings-label">First category shows</p>
+                  <select
+                    id="settings-first-view"
+                    class="settings-select"
+                    aria-labelledby="settings-first-view-label"
+                  ></select>
+                </section>
                 <!-- Personalisation groups the choices that only change how the
                      list behaves once something has been listened to. -->
                 <section id="settings-personal-section" class="settings-section">
@@ -146,6 +156,9 @@
                         </button>
                       </div>
                     </div>
+                    <button id="settings-later-clear" class="settings-later-clear" type="button">
+                      Clear all Listen later
+                    </button>
                   </div>
                   <!-- The remaining choices form a second group, with the cache
                        the last switch can build up inside it too. -->
@@ -404,6 +417,29 @@
           <button id="log-copy" class="log-button" type="button">Copy</button>
           <button id="log-clear" class="log-button" type="button">Clear</button>
           <button id="log-close" class="log-button log-button-primary" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dropping every saved episode cannot be undone, so the row action asks
+         here first. The card is the log window's, narrowed to one question. -->
+    <div
+      id="confirm-dialog"
+      class="log-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-message"
+      hidden
+    >
+      <div class="log-card confirm-card">
+        <div class="log-head">
+          <p id="confirm-title" class="log-title">Clear all Listen later</p>
+          <p id="confirm-message" class="log-summary"></p>
+        </div>
+        <div class="log-actions">
+          <button id="confirm-cancel" class="log-button" type="button">Cancel</button>
+          <button id="confirm-accept" class="log-button log-button-primary" type="button">Clear</button>
         </div>
       </div>
     </div>
