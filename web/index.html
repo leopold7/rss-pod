@@ -381,7 +381,12 @@
         <button class="episode-play-button" type="button">
           <img src="/icons/play.svg" alt="" />
         </button>
-        <span class="episode-source"></span>
+        <!-- The feed name and the badge a source rule adds beside it share one
+             grid cell, so a row without a badge keeps the column to itself. -->
+        <span class="episode-source-cell">
+          <span class="episode-source"></span>
+          <span class="episode-tag"></span>
+        </span>
         <h2 class="episode-title"></h2>
         <time class="episode-time"></time>
       </article>

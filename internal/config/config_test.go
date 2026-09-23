@@ -97,6 +97,17 @@ func TestLoadCurrentConfig(t *testing.T) {
 	if got := cfg.EpisodeSources(); len(got) != 0 {
 		t.Fatalf("episode sources = %#v, want none", got)
 	}
+	// The example documents the badge dictionary but must not label anything
+	// until an operator writes a rule of its own.
+	if got := cfg.TagTexts["long_article"]["zh-CN"]; got != "长文章" {
+		t.Fatalf("example tag_texts = %#v", cfg.TagTexts)
+	}
+	if cfg.Defaults.Tag != nil {
+		t.Fatalf("example defaults.tag = %#v, want none", cfg.Defaults.Tag)
+	}
+	if got := cfg.TagForArticle("zhihu-daily", 5000); got != nil {
+		t.Fatalf("example source badge = %#v, want none", got)
+	}
 }
 
 func TestLoadSourcePollOnly(t *testing.T) {
@@ -310,6 +321,198 @@ func TestValidateSourceFilter(t *testing.T) {
 	}
 }
 
+// tagTextsFixture is the shared badge dictionary the tag tests append to
+// minimalConfig, so a rule only has to name one of its entries.
+const tagTextsFixture = `
+tag_texts:
+  long_article: {en: Long read, zh-CN: 长文章}
+  note: {en: Reference only, zh-CN: 仅供参考}
+`
+
+// A rule is evaluated per article: the default applies to every source, a
+// source replaces that block as a whole, and an empty block turns it off.
+func TestSourceTagRules(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		// omitDefaults leaves defaults without a rule, which is the shape a
+		// deployment that never configured this setting has.
+		omitDefaults bool
+		length       int
+		// want is the badge of the source, and wantDefault the one of an owner
+		// without a rule of its own, such as a subscription.
+		want        string
+		wantDefault string
+	}{
+		{name: "below the default threshold", length: 499},
+		{name: "at the default threshold", length: 500, want: "Long read", wantDefault: "Long read"},
+		{name: "above the default threshold", length: 501, want: "Long read", wantDefault: "Long read"},
+		{
+			name:        "a source rule replaces the default as a whole",
+			source:      "    tag: {type: length, value: 1000, text: long_article}\n",
+			length:      500,
+			wantDefault: "Long read",
+		},
+		{
+			name:        "a source rule applies at its own threshold",
+			source:      "    tag: {type: length, value: 1000, text: long_article}\n",
+			length:      1000,
+			want:        "Long read",
+			wantDefault: "Long read",
+		},
+		{
+			name:        "the rule type is case insensitive",
+			source:      "    tag: {type: LENGTH, value: 500, text: long_article}\n",
+			length:      500,
+			want:        "Long read",
+			wantDefault: "Long read",
+		},
+		{
+			name:        "a source text may name another entry",
+			source:      "    tag: {type: length, value: 500, text: note}\n",
+			length:      500,
+			want:        "Reference only",
+			wantDefault: "Long read",
+		},
+		{
+			name:        "an empty block turns the badge off",
+			source:      "    tag: {}\n",
+			length:      5000,
+			wantDefault: "Long read",
+		},
+		{name: "no rule at all", omitDefaults: true, length: 5000},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := strings.Replace(minimalConfig, "    feed: {url: http://localhost/feed.xml}",
+				"    feed: {url: http://localhost/feed.xml}\n"+test.source, 1)
+			if !test.omitDefaults {
+				data = strings.Replace(data, "  podcast: {max_age: 72h}",
+					"  podcast: {max_age: 72h}\n  tag: {type: length, value: 500, text: long_article}", 1)
+			}
+			cfg, err := Load(writeConfig(t, data+tagTextsFixture))
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			texts := cfg.TagForArticle("test", test.length)
+			if got := texts["en"]; got != test.want {
+				t.Fatalf("TagForArticle(%d) = %#v, want %q", test.length, texts, test.want)
+			}
+			if test.want != "" && texts["zh-CN"] == "" {
+				t.Fatalf("TagForArticle(%d) = %#v, want every configured language", test.length, texts)
+			}
+			// A subscription declares no tag of its own, so it follows the
+			// default rule of the deployment.
+			if got := cfg.TagForArticle("peer-podcast", test.length)["en"]; got != test.wantDefault {
+				t.Fatalf("TagForArticle for a subscription = %q, want %q", got, test.wantDefault)
+			}
+		})
+	}
+}
+
+func TestValidateSourceTag(t *testing.T) {
+	tests := []struct {
+		name string
+		// defaults and source are the tag blocks the fixture declares, empty
+		// for none; texts replaces the shared dictionary.
+		defaults string
+		source   string
+		texts    string
+		wantErr  string
+	}{
+		{
+			name:   "valid source rule",
+			source: "    tag: {type: length, value: 500, text: long_article}\n",
+			texts:  tagTextsFixture,
+		},
+		{
+			name:     "valid default rule",
+			defaults: "  tag: {type: length, value: 500, text: long_article}\n",
+			texts:    tagTextsFixture,
+		},
+		{
+			name:   "an empty block opts out",
+			source: "    tag: {}\n",
+			texts:  tagTextsFixture,
+		},
+		{
+			name:  "the dictionary may hold unused entries",
+			texts: tagTextsFixture,
+		},
+		{
+			name:    "unknown rule type",
+			source:  "    tag: {type: words, value: 500, text: long_article}\n",
+			texts:   tagTextsFixture,
+			wantErr: `source test tag has unsupported type "words"; supported types are "length"`,
+		},
+		{
+			name:     "unknown rule type on the default",
+			defaults: "  tag: {type: words, value: 500, text: long_article}\n",
+			texts:    tagTextsFixture,
+			wantErr:  `defaults.tag has unsupported type "words"`,
+		},
+		{
+			name:    "threshold must be positive",
+			source:  "    tag: {type: length, value: 0, text: long_article}\n",
+			texts:   tagTextsFixture,
+			wantErr: "source test tag.value must be a positive character count",
+		},
+		{
+			name:    "text must name an entry",
+			source:  "    tag: {type: length, value: 500, text: missing}\n",
+			texts:   tagTextsFixture,
+			wantErr: `source test tag references unknown tag_texts entry "missing"`,
+		},
+		{
+			name:    "text must not be empty",
+			source:  "    tag: {type: length, value: 500}\n",
+			texts:   tagTextsFixture,
+			wantErr: "source test tag.text must reference an entry of tag_texts",
+		},
+		{
+			name:    "a rule without a type must carry nothing else",
+			source:  "    tag: {value: 500}\n",
+			texts:   tagTextsFixture,
+			wantErr: "source test tag.type must not be empty",
+		},
+		{
+			name:    "dictionary entry without a language",
+			texts:   "\ntag_texts:\n  long_article: {}\n",
+			wantErr: "tag_texts long_article must contain at least one language",
+		},
+		{
+			name:    "dictionary entry without text",
+			texts:   "\ntag_texts:\n  long_article: {en: \"   \"}\n",
+			wantErr: "tag_texts long_article must contain text for one of its languages",
+		},
+		{
+			name:    "dictionary entry without a language code",
+			texts:   "\ntag_texts:\n  long_article: {\"\": 长文章}\n",
+			wantErr: "tag_texts long_article contains an entry without a language code",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := strings.Replace(minimalConfig, "    feed: {url: http://localhost/feed.xml}",
+				"    feed: {url: http://localhost/feed.xml}\n"+test.source, 1)
+			if test.defaults != "" {
+				data = strings.Replace(data, "  podcast: {max_age: 72h}",
+					"  podcast: {max_age: 72h}\n"+test.defaults, 1)
+			}
+			_, err := Load(writeConfig(t, data+test.texts))
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Load() error = %v, want containing %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestEpisodeSourcesOrder(t *testing.T) {
 	order := func(value int) *int { return &value }
 	tests := []struct {
@@ -348,6 +551,42 @@ func TestEpisodeSourcesOrder(t *testing.T) {
 			name:    "an order beyond the list moves towards the end",
 			sources: []SourceConfig{{ID: "a", Enabled: true, Order: order(9)}, {ID: "b", Enabled: true}},
 			want:    []string{"b", "a"},
+		},
+		{
+			name: "a repeated order moves to the next free position",
+			sources: []SourceConfig{
+				{ID: "a", Enabled: true, Order: order(2)},
+				{ID: "b", Enabled: true, Order: order(2)},
+				{ID: "c", Enabled: true, Order: order(2)},
+			},
+			want: []string{"a", "b", "c"},
+		},
+		{
+			name: "a repeated order keeps the configuration sequence of the ordered entries",
+			sources: []SourceConfig{
+				{ID: "a", Enabled: true},
+				{ID: "b", Enabled: true, Order: order(1)},
+				{ID: "c", Enabled: true, Order: order(1)},
+			},
+			want: []string{"b", "c", "a"},
+		},
+		{
+			name: "a skipped order leaves the gap to the unset entries",
+			sources: []SourceConfig{
+				{ID: "a", Enabled: true, Order: order(1)},
+				{ID: "b", Enabled: true, Order: order(5)},
+				{ID: "c", Enabled: true},
+			},
+			want: []string{"a", "c", "b"},
+		},
+		{
+			name: "a skipped order without unset entries fills up to the end",
+			sources: []SourceConfig{
+				{ID: "a", Enabled: true, Order: order(1)},
+				{ID: "b", Enabled: true, Order: order(6)},
+				{ID: "c", Enabled: true, Order: order(7)},
+			},
+			want: []string{"a", "b", "c"},
 		},
 	}
 	for _, test := range tests {
@@ -499,15 +738,6 @@ func TestValidateSubscriptions(t *testing.T) {
 			wantErr: "subscription peer order must be at least 1",
 		},
 		{
-			name: "order colliding with a source",
-			mutate: func(c *Config) {
-				c.Subscriptions[0].Order = intPtr(1)
-				c.Sources = append([]SourceConfig(nil), c.Sources...)
-				c.Sources[0].Order = intPtr(1)
-			},
-			wantErr: "subscription peer order 1 is already used by source test",
-		},
-		{
 			name: "order below one on a source",
 			mutate: func(c *Config) {
 				c.Sources = append([]SourceConfig(nil), c.Sources...)
@@ -529,23 +759,27 @@ func TestValidateSubscriptions(t *testing.T) {
 	}
 }
 
-// A disabled entry never reaches the player filter, so its order may repeat a
-// position that an enabled entry already holds.
-func TestValidateFilterOrderIgnoresDisabledEntries(t *testing.T) {
+// Sources and subscriptions share the player filter, so an order may repeat:
+// the second entry of the pair moves to the next free position instead of the
+// configuration being rejected, and no position of the filter is left empty.
+func TestValidateRepeatedFilterOrder(t *testing.T) {
 	cfg, err := Load(writeConfig(t, minimalConfig+subscriptionFixture))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	cfg.Sources[0].Order = intPtr(1)
 	cfg.Subscriptions[0].Order = intPtr(1)
-	cfg.Subscriptions[0].Enabled = false
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("disabled entry with a duplicate order rejected: %v", err)
+		t.Fatalf("repeated filter order rejected: %v", err)
 	}
-
-	cfg.Subscriptions[0].Enabled = true
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "already used by source test") {
-		t.Fatalf("Validate() error = %v, want duplicate order error", err)
+	refs := cfg.EpisodeSources()
+	if len(refs) != 2 || refs[0].ID != cfg.Sources[0].ID || refs[1].ID != cfg.Subscriptions[0].ID {
+		t.Fatalf("EpisodeSources() = %#v", refs)
+	}
+	for _, ref := range refs {
+		if ref.ID == "" || ref.Name == "" {
+			t.Fatalf("EpisodeSources() carries an empty entry: %#v", refs)
+		}
 	}
 }
 

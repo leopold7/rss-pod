@@ -614,3 +614,85 @@ func TestPlayerEpisodesUseTheRequestHostMediaOrigin(t *testing.T) {
 		t.Fatalf("feed did not keep the default media host: %s", body)
 	}
 }
+
+// A tag rule measures the article an episode came from, so the badge follows
+// the feed fields the content pipeline reads: content, falling back to the
+// description of a feed that carries none, with the markup removed before the
+// characters are counted.
+func TestPlayerEpisodeTagsMeasureTheArticleText(t *testing.T) {
+	pool := adminTestPool(t)
+	cfg := &config.Config{
+		Sources:  []config.SourceConfig{{ID: "test", Name: "Test", Enabled: true}},
+		TagTexts: map[string]config.TagText{"long_article": {"en": "Long read", "zh-CN": "长文章"}},
+	}
+	cfg.Defaults.Tag = &config.TagRuleConfig{
+		Type:  config.TagRuleTypeLength,
+		Value: 10,
+		Text:  "long_article",
+	}
+	mux := newPlayerMux(newPlayerServer(cfg, pool, nil))
+
+	ctx := context.Background()
+	// Every episode is published, which is what the player lists, and its feed
+	// item carries the content and description the rule reads.
+	insert := func(content, description string) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		if _, err := pool.Exec(ctx, `
+			WITH f AS (
+			    INSERT INTO feed_items (source_id, external_id, title, content, description, published_at)
+			    VALUES ('test', $2, 'Episode', $3, $4, now())
+			    RETURNING id
+			)
+			INSERT INTO episodes (id, source_id, feed_item_id, title, status, audio_url, published_at)
+			SELECT $1, 'test', id, 'Episode', 'published', 'https://media.example.com/one.mp3', now() FROM f
+		`, id, uuid.NewString(), content, description); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	longContent := insert("<p>这是一个足够长的文章正文，用来触发标识显示。</p>", "<p>很短的摘要</p>")
+	longDescription := insert("", "<div>这也是足够长的正文，只有 description 字段提供。</div>")
+	tooShort := insert("<p>太短</p>", "")
+
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/player/episodes", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("player status = %d: %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Episodes []struct {
+			ID  uuid.UUID         `json:"id"`
+			Tag map[string]string `json:"tag"`
+		} `json:"episodes"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	tags := make(map[uuid.UUID]map[string]string, len(payload.Episodes))
+	for _, episode := range payload.Episodes {
+		tags[episode.ID] = episode.Tag
+	}
+
+	for _, test := range []struct {
+		name    string
+		id      uuid.UUID
+		wantTag bool
+	}{
+		{name: "content above the threshold", id: longContent, wantTag: true},
+		{name: "description replaces an empty content", id: longDescription, wantTag: true},
+		{name: "content below the threshold", id: tooShort},
+	} {
+		tag := tags[test.id]
+		if !test.wantTag {
+			if tag != nil {
+				t.Fatalf("%s: tag = %#v, want none", test.name, tag)
+			}
+			continue
+		}
+		if tag["en"] != "Long read" || tag["zh-CN"] != "长文章" {
+			t.Fatalf("%s: tag = %#v, want every configured language", test.name, tag)
+		}
+	}
+}

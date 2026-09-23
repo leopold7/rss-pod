@@ -1090,6 +1090,16 @@ input:focus-visible {
   }
 }
 
+/* The feed name and the badge of its source rule share the column, so the name
+   is the part that ellipsises and the badge keeps its own box. */
+.episode-source-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .episode-source {
   overflow: hidden;
   color: var(--blue);
@@ -1102,6 +1112,28 @@ input:focus-visible {
 /* Category rows repeat one feed, so that column carries the publish date. */
 .episode-source.is-date {
   font-variant-numeric: tabular-nums;
+}
+
+/* A badge a source rule adds, drawn like a tab counter: a rounded chip that
+   takes no space at all until its text is set. */
+.episode-tag {
+  display: none;
+  /* The badge keeps its text: the feed name beside it is the part that
+     ellipsises, the same way it does when no badge is shown. */
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border: 1px solid rgb(174 207 240 / 62%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 66%);
+  color: var(--blue-hover);
+  font-size: clamp(12px, 0.95vw, 14px);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.episode-tag.is-visible {
+  display: inline-flex;
+  align-items: center;
 }
 
 .episode-title {
@@ -1838,10 +1870,18 @@ input:focus-visible {
     height: 29px;
   }
 
-  .episode-source {
+  .episode-source-cell {
     grid-area: source;
     align-self: end;
+  }
+
+  .episode-source {
     font-size: 14px;
+  }
+
+  .episode-tag {
+    padding: 1px 7px;
+    font-size: 11px;
   }
 
   .episode-title {
@@ -2430,6 +2470,14 @@ input:focus-visible {
 :root[data-theme="dark"] .date-count {
   border-color: rgb(80 116 160 / 50%);
   background: rgb(255 255 255 / 7%);
+}
+
+/* The badge of a source rule follows the counter above: the same chip, with the
+   border and wash that read on the dark surface. Its text already comes from
+   the themed accent colour. */
+:root[data-theme="dark"] .episode-tag {
+  border-color: rgb(80 116 160 / 50%);
+  background: rgb(255 255 255 / 8%);
 }
 
 :root[data-theme="dark"] .source-filter-section {

@@ -329,6 +329,54 @@ on the articles the source wants only. `check` reports an unsupported rule type,
 a regular expression that does not compile, and a source that uses the whitelist
 and the blacklist together.
 
+### Source badges
+
+A source can label the episodes it produces, so a row says what it is before it
+is played. `tag_texts` is a shared dictionary of badge texts, written in every
+language the player serves; a rule references one entry by key, which lets
+several sources reuse the same wording.
+
+`defaults.tag` gives every source a rule, and a source replaces that block as a
+whole with a `tag` of its own. An empty `tag:` block shows no badge on that
+source. The only rule type today is `length`, which measures the article the
+episode was generated from in characters:
+
+```yaml
+tag_texts:
+  long_article:
+    en: Long read
+    zh-CN: 长文章
+
+defaults:
+  tag:
+    type: length
+    # From 500 characters on, the badge says the article is a long read.
+    value: 500
+    text: long_article
+
+sources:
+  - id: jikeai
+    # This source replaces the default rule: from 1000 characters on.
+    tag:
+      type: length
+      value: 1000
+      text: long_article
+```
+
+The badge follows the language of the page: the player takes the entry that
+matches the page it renders (`en`, `zh-CN`), then the base language of that page
+(`zh`), then English, and finally any text the dictionary holds. A deployment
+that sets neither `defaults.tag` nor a source `tag` shows no badge at all and
+behaves exactly as before. `check` reports an unknown rule type, a length that
+is not positive, a `text` that does not name a `tag_texts` entry, and a
+`tag_texts` entry that carries no text.
+
+The character count comes from the article as it was stored at poll time: the
+feed content, falling back to the feed description when the feed carries no
+content, with its HTML markup removed, so the threshold compares characters a
+reader would see. An episode of a mirrored subscription carries no article of
+its own and is never labelled.
+
 ### Subscriptions
 
 A subscription mirrors another rss-pod deployment. It reads no feed: on its own
@@ -374,9 +422,11 @@ subscriptions, in configuration order, and paging follows that same sequence.
 `order` pins an entry to a position in that one list: `1` comes first, an entry
 without an order keeps the configuration sequence and fills the positions the
 ordered entries leave open, and an `order` beyond the last entry moves towards
-the end. Sources and subscriptions share the filter, so an `order` must be
-unique across the entries that are enabled; a disabled entry keeps its value
-without joining the list.
+the end. Sources and subscriptions share the filter, so two of them asking for
+the same position is fine: the second one moves to the next free position, and a
+number that is skipped simply leaves the slot to an entry without an order, so
+the filter never shows an empty entry. A disabled entry keeps its value without
+joining the list.
 
 The main commands are:
 

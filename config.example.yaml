@@ -227,6 +227,19 @@ dialogue_profiles:
           一位资深科技评论员，互联网老兵。做过程序员、产品经理，也创过业，对平台机制、内容传播和叙事包装背后的逻辑格外敏感。面对知乎里的热门议题和精选内容，他不满足于复述高赞观点或文章结论，更喜欢拆开看其中有没有概念混淆、样本偏差、情绪放大和被过度包装的部分，判断哪些是真问题、真趋势，哪些只是平台语境里的短期热度。说话直接、观点犀利，但能把复杂问题聊得很明白。
         voice: edge:zh-CN-YunjianNeural
 
+# Badge texts for the player, written in every language it serves. A tag rule
+# references one entry by key, so several sources can show the same wording.
+# The player takes the entry matching the page it renders ("en", "zh-CN"), then
+# the base language of that page, then English, then any entry the deployment
+# did provide.
+# 播放器标识文案，按播放器支持的语言书写。标识规则用 key 引用其中一条，因此多个来源
+# 可以共用同一段文案。播放器优先取与页面语言（"en"、"zh-CN"）一致的条目，其次取该
+# 语言的主语言，再取 "en"，最后取其中任意一条。
+tag_texts:
+  long_article:
+    en: Long read
+    zh-CN: 长文章
+
 defaults:
   schedule:
     # The scheduler only evaluates the current minute and does not backfill missed cron runs.
@@ -274,15 +287,33 @@ defaults:
   podcast:
     max_age: 72h
 
+  # A badge the player shows beside the name of a source. The rule runs per
+  # episode, against the article that episode was generated from, and its text
+  # comes from the shared tag_texts dictionary above. A source replaces the
+  # whole block with its own, and an empty tag: block shows no badge at all.
+  # 播放器显示在来源名称旁的标识。规则按每集单独判断，依据是该集对应的文章，文案取自
+  # 上面的 tag_texts 词典。来源可以用自己的 tag 整块替换默认规则，声明空的 tag: 块
+  # 则不显示任何标识。
+  # tag:
+  #   # length shows the badge once the article reaches value characters. The
+  #   # count is the text the content pipeline reads (the feed content, falling
+  #   # back to the feed description) with its HTML markup removed.
+  #   # length 表示文章达到 value 个字符时显示该标识；字符数是内容流水线读取的那份正文
+  #   # （优先 content，缺失时用 description）去掉 HTML 标签后的结果。
+  #   type: length
+  #   value: 500
+  #   text: long_article
+
 sources:
   - id: zhihu-daily
     name: 知乎日报
     enabled: false
     # Order places the entry in the player's source filter; 1 comes first. An
     # entry without an order keeps the configuration sequence and fills the
-    # positions that the ordered entries leave open.
+    # positions that the ordered entries leave open. Repeating an order, or
+    # skipping one, is fine: the entry moves to the next free position.
     # order 决定该条目在播放器来源筛选中的位置，1 表示排在最前；不填写时按配置顺序
-    # 填补已排序条目留下的位置。
+    # 填补已排序条目留下的位置。order 重复或断档都不会报错，自动顺延到下一个空位。
     # order: 1
     # Poll-only keeps this source discover-only: polling only stores new entries,
     # the player lists their titles with a download button, and generation starts
@@ -320,6 +351,13 @@ sources:
     #   blacklist:
     #     - type: title
     #       regex: "人事观察"
+    # A source-level tag replaces defaults.tag as a whole, and an empty tag:
+    # block shows no badge on this source.
+    # 来源级 tag 会整块替换 defaults.tag；声明空的 tag: 块则该来源不显示标识。
+    # tag:
+    #   type: length
+    #   value: 1000
+    #   text: long_article
     schedule:
       cron: "50 21 * * *"
     generation:
@@ -391,11 +429,11 @@ sources:
 # 节目一入库即可播放。
 # id becomes the source_id of the mirrored episodes and the name shown in the
 # player filter, so it must not repeat a source id. A subscription shares that
-# one filter with the sources above, so order positions it in the same list and
-# must not repeat the order of an enabled source.
+# one filter with the sources above, so order positions it in the same list; a
+# repeated or skipped position just moves to the next free slot.
 # id 会成为被镜像条目的 source_id 和播放器筛选项名称，因此不能与 source id 重复。
-# 订阅与上面的来源共用同一个筛选，因此 order 也是在这个列表里定位，并且不能与已启用
-# source 的 order 重复。
+# 订阅与上面的来源共用同一个筛选，因此 order 也是在这个列表里定位；order 重复或
+# 断档都不会报错，自动顺延到下一个空位。
 # Pulling a remote deployment is an external call, so the example stays disabled.
 # 拉取远端部署属于外部调用，因此示例默认关闭。
 subscriptions:

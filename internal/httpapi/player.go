@@ -153,6 +153,10 @@ type playerEpisode struct {
 	// again. Stage is set while state is processing.
 	State string `json:"state"`
 	Stage string `json:"stage,omitempty"`
+	// Tag carries the badge text in every language the deployment configured;
+	// the page picks the one it renders. An episode whose source rule does not
+	// match, and a deployment without a rule, send no tag at all.
+	Tag config.TagText `json:"tag,omitempty"`
 	// objectKey locates the audio inside the media bucket. It is only used to
 	// rebuild AudioURL for the site that asked, so it is never serialised.
 	objectKey string
@@ -171,6 +175,15 @@ func mediaAudioURL(host, storedURL, objectKey string, storage config.StorageConf
 		return storedURL
 	}
 	return base + "/" + strings.TrimLeft(objectKey, "/")
+}
+
+// episodeTag resolves the badge an episode shows. A server built without a
+// configuration, which is how the notice tests build one, shows none.
+func (s *playerServer) episodeTag(sourceID string, articleLength int) config.TagText {
+	if s.cfg == nil {
+		return nil
+	}
+	return s.cfg.TagForArticle(sourceID, articleLength)
 }
 
 // playerEpisodeState maps the internal pipeline status to the small, machine
@@ -233,11 +246,17 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 	sourceID := r.URL.Query().Get("source_id")
 	// Episodes of a poll-only source are listed before they are generated, and
 	// an episode waiting for a listener has no published_at yet, so both the
-	// window and the order fall back to the feed item's own timestamp.
+	// window and the order fall back to the feed item's own timestamp. The
+	// article is measured in the database, so its text never has to leave it:
+	// it reads the field the content pipeline reads (content, falling back to
+	// description) with its markup removed, because that is what a reader
+	// counts. Entities such as &amp; stay counted as written, which is precise
+	// enough for a threshold an operator tunes against its own feeds.
 	rows, err := s.pool.Query(r.Context(), `
 		SELECT e.id, e.source_id, e.title, e.audio_url, e.audio_object_key,
 		       e.audio_byte_size, e.audio_duration_seconds,
-		       COALESCE(e.published_at, f.published_at), f.published_at, e.hidden_at IS NOT NULL, e.status
+		       COALESCE(e.published_at, f.published_at), f.published_at, e.hidden_at IS NOT NULL, e.status,
+		       char_length(regexp_replace(COALESCE(NULLIF(f.content, ''), f.description), '<[^>]*>', '', 'g'))
 		FROM episodes e
 		JOIN feed_items f ON f.id = e.feed_item_id
 		WHERE (
@@ -262,6 +281,7 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 	for rows.Next() {
 		var episode playerEpisode
 		var status string
+		var articleLength int
 		if err := rows.Scan(
 			&episode.ID,
 			&episode.SourceID,
@@ -274,6 +294,7 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 			&episode.OriginalPublishedAt,
 			&episode.Hidden,
 			&status,
+			&articleLength,
 		); err != nil {
 			slog.Error("scan player episode", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to load episodes")
@@ -283,6 +304,7 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 		// so a mirrored episode (which has no object key) is left untouched.
 		episode.AudioURL = mediaAudioURL(r.Host, episode.AudioURL, episode.objectKey, s.storage)
 		episode.State, episode.Stage = playerEpisodeState(status, episode.AudioURL != "")
+		episode.Tag = s.episodeTag(episode.SourceID, articleLength)
 		episodes = append(episodes, episode)
 	}
 	if err := rows.Err(); err != nil {

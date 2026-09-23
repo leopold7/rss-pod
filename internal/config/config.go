@@ -58,9 +58,15 @@ type Config struct {
 	Runtime          RuntimeConfig              `yaml:"runtime"`
 	Services         ServicesConfig             `yaml:"services"`
 	DialogueProfiles map[string]DialogueProfile `yaml:"dialogue_profiles"`
-	Defaults         DefaultsConfig             `yaml:"defaults"`
-	Sources          []SourceConfig             `yaml:"sources"`
-	Subscriptions    []SubscriptionConfig       `yaml:"subscriptions"`
+	// TagTexts is the shared dictionary the tag rules read their text from:
+	// rules reference one entry by key, so several sources can show the same
+	// wording without repeating it.
+	// TagTexts 是标识规则读取文案的共享词典：规则按 key 引用其中一条，多个来源可以
+	// 共用同一段文案而不必重复书写。
+	TagTexts      map[string]TagText   `yaml:"tag_texts" json:"tag_texts,omitempty"`
+	Defaults      DefaultsConfig       `yaml:"defaults"`
+	Sources       []SourceConfig       `yaml:"sources"`
+	Subscriptions []SubscriptionConfig `yaml:"subscriptions"`
 }
 
 type RuntimeConfig struct {
@@ -299,6 +305,11 @@ type DefaultsConfig struct {
 	Content    ContentConfig    `yaml:"content"`
 	Limits     LimitsConfig     `yaml:"limits"`
 	Podcast    PodcastConfig    `yaml:"podcast"`
+	// Tag is the badge every source shows beside its name unless it declares
+	// one of its own. Unset means no source shows a badge.
+	// Tag 是所有来源在名称旁显示的标识，来源自己声明 tag 时整块覆盖它；不配置表示
+	// 没有任何来源显示标识。
+	Tag *TagRuleConfig `yaml:"tag" json:"tag,omitempty"`
 }
 
 type ScheduleConfig struct {
@@ -469,9 +480,11 @@ type SourceConfig struct {
 	PollOnly bool `yaml:"poll_only" json:"poll_only"`
 	// Order places the source in the player's filter; 1 comes first. An entry
 	// without an order keeps the configuration sequence and fills the positions
-	// that the ordered entries leave open.
+	// that the ordered entries leave open. A repeated order, or one that skips a
+	// position, moves towards the next free slot rather than being rejected.
 	// Order 决定该来源在播放器筛选中的位置，1 表示排在最前；不填写时按配置顺序
-	// 填补已排序条目留下的位置。
+	// 填补已排序条目留下的位置。order 重复或断档都不会报错，而是自动顺延到下一个
+	// 空位。
 	Order      *int              `yaml:"order" json:"order,omitempty"`
 	Feed       FeedConfig        `yaml:"feed" json:"feed"`
 	Schedule   ScheduleConfig    `yaml:"schedule" json:"schedule"`
@@ -488,6 +501,13 @@ type SourceConfig struct {
 	// 黑名单丢弃命中的条目，二者不能同时使用。不配置时，或列表里没有规则时，处理
 	// 全部条目。
 	Filter *SourceFilterConfig `yaml:"filter" json:"filter,omitempty"`
+	// Tag shows a badge beside this source's name in the player. It replaces
+	// defaults.tag as a whole, so a source that wants no badge declares an
+	// empty block instead of inheriting one; an absent block keeps the
+	// default, and neither being set shows nothing.
+	// Tag 在该来源名称旁显示一个标识。它会整块替换 defaults.tag，因此不想要标识的
+	// 来源需要显式声明空块而不能靠继承关闭；不声明时沿用默认值，两者都没有则不显示。
+	Tag *TagRuleConfig `yaml:"tag" json:"tag,omitempty"`
 }
 
 type FeedConfig struct {
@@ -609,6 +629,41 @@ func (f ItemFilter) matches(item FilterItem) bool {
 	return false
 }
 
+// TagRuleTypeLength shows a source's badge once the article it turned into an
+// episode reaches Value characters. The count is the article the content
+// pipeline reads, feed_items.content falling back to description, with its
+// markup removed, so the threshold compares characters a reader would see. A
+// new rule type is added by extending TagForArticle, so every badge keeps one
+// configuration shape.
+// TagRuleTypeLength 表示文章达到 Value 个字符时显示标识；字符数是内容流水线读取的那份
+// 正文（feed_items.content，为空时用 description）去掉 HTML 标签后的结果，因此阈值比
+// 较的是读者能看到的字数。新增规则类型只需扩展 TagForArticle。
+const TagRuleTypeLength = "length"
+
+// TagText is one badge text in every language the player serves. Keys are the
+// language codes the player renders ("en" and "zh-CN"), and a page picks the
+// entry that matches its own language, falling back to the first text the
+// entry carries.
+// TagText 是一条标识文案在各语言下的文本。key 使用播放器渲染的语言代码（"en" 与
+// "zh-CN"），页面优先取与自己语言一致的条目，取不到时回退到其中任意一条。
+type TagText map[string]string
+
+// TagRuleConfig is the badge a source shows beside its name in the player:
+// Type selects the condition the rule tests, Value is the threshold that
+// condition reads (for length, the character count of the article text), and
+// Text names one entry of the shared tag_texts dictionary, so several rules can
+// reuse the same wording. An empty block declares no badge, which is how a
+// source opts out of defaults.tag.
+// TagRuleConfig 描述来源显示在播放器名称旁的标识：type 决定规则判断的条件，value
+// 是该条件读取的阈值（length 取文章正文的字符数），text 引用顶层 tag_texts 词典里的
+// 一个条目，因此多条规则可以复用同一段文案。空块表示不显示标识，来源可以用它退出
+// defaults.tag。
+type TagRuleConfig struct {
+	Type  string `yaml:"type" json:"type"`
+	Value int    `yaml:"value" json:"value"`
+	Text  string `yaml:"text" json:"text"`
+}
+
 // SubscriptionConfig mirrors another rss-pod deployment. Instead of reading a
 // feed, it pulls the remote player endpoint and republishes the episodes that
 // deployment already produced, so a deployment can carry podcasts that other
@@ -620,9 +675,12 @@ type SubscriptionConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	// Order places the subscription in the player's filter, which both lists
 	// share; 1 comes first. An entry without an order keeps the configuration
-	// sequence and fills the positions that the ordered entries leave open.
+	// sequence and fills the positions that the ordered entries leave open. A
+	// repeated order, or one that skips a position, moves towards the next free
+	// slot rather than being rejected.
 	// Order 决定该订阅在播放器筛选中的位置（来源与订阅共用同一个筛选），1 表示
-	// 排在最前；不填写时按配置顺序填补已排序条目留下的位置。
+	// 排在最前；不填写时按配置顺序填补已排序条目留下的位置。order 重复或断档都不会
+	// 报错，而是自动顺延到下一个空位。
 	Order *int `yaml:"order" json:"order,omitempty"`
 	// BaseURL is the origin of the remote deployment, without the API path.
 	BaseURL string `yaml:"base_url" json:"base_url"`
@@ -699,11 +757,13 @@ type episodeSource struct {
 	order *int
 }
 
-// orderEpisodeSources places the entries that carry an order at their position
-// and fills the slots that stay open with the unset entries, which keep their
-// configuration sequence. An order beyond the last entry moves towards the
-// end, and positions are resolved in ascending order so two entries never
-// claim the same slot.
+// orderEpisodeSources places the entries that carry an order at the position
+// they ask for and fills the slots that stay open with the unset entries, which
+// keep their configuration sequence. An order reads as a rank rather than as a
+// fixed slot: a repeated order moves to the next free position, and so does an
+// order that leaves a gap, so the filter never carries an empty entry. An order
+// beyond the last entry moves towards the end, and positions are resolved in
+// ascending order so two entries never claim the same slot.
 func orderEpisodeSources(entries []episodeSource) []SourceRef {
 	refs := make([]SourceRef, len(entries))
 	if len(entries) == 0 {
@@ -722,13 +782,18 @@ func orderEpisodeSources(entries []episodeSource) []SourceRef {
 	sort.SliceStable(ordered, func(i, j int) bool { return *ordered[i].order < *ordered[j].order })
 
 	taken := make([]bool, len(entries))
+	// next is the first position that is still free, so a repeated order, or one
+	// that asks for a position a previous entry already moved into, keeps the
+	// sequence instead of overwriting its neighbour.
 	next := 0
-	for _, entry := range ordered {
+	for i, entry := range ordered {
 		position := *entry.order - 1
 		if position < next {
 			position = next
 		}
-		if last := len(entries) - 1; position > last {
+		// The entries that still follow need one position each, so an order past
+		// the end collapses onto the tail rather than past it.
+		if last := len(entries) - (len(ordered) - i); position > last {
 			position = last
 		}
 		refs[position] = entry.ref
@@ -924,6 +989,12 @@ func (c *Config) Validate() error {
 	if err := c.validateGeneration("defaults.generation", c.Defaults.Generation); err != nil {
 		return err
 	}
+	if err := c.validateTagTexts(); err != nil {
+		return err
+	}
+	if err := c.validateTagRule("defaults.tag", c.Defaults.Tag); err != nil {
+		return err
+	}
 	if c.Defaults.Limits.MaxFeedItemsPerRun < 1 || c.Defaults.Limits.MaxDocumentsPerItem < 1 {
 		return errors.New("defaults limits must be positive")
 	}
@@ -946,9 +1017,6 @@ func (c *Config) Validate() error {
 	}
 
 	seen := make(map[string]struct{}, len(c.Sources))
-	// Sources and subscriptions share the player filter, so they also share one
-	// namespace of filter positions.
-	orderSeen := make(map[int]string, len(c.Sources)+len(c.Subscriptions))
 	cronParser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	for i := range c.Sources {
 		source := &c.Sources[i]
@@ -975,6 +1043,9 @@ func (c *Config) Validate() error {
 		if _, err := source.Filter.Compile(); err != nil {
 			return fmt.Errorf("source %s filter: %w", source.ID, err)
 		}
+		if err := c.validateTagRule("source "+source.ID+" tag", source.Tag); err != nil {
+			return err
+		}
 		if len(source.LLM) > 0 {
 			if err := validateServiceReferences("source "+source.ID+" llm", source.LLM, c.Services.LLM); err != nil {
 				return err
@@ -988,7 +1059,7 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("source %s podcast.max_age must be a positive duration", source.ID)
 			}
 		}
-		if err := validateFilterOrder("source "+source.ID, source.Enabled, source.Order, orderSeen); err != nil {
+		if err := validateFilterOrder("source "+source.ID, source.Order); err != nil {
 			return err
 		}
 	}
@@ -1019,31 +1090,24 @@ func (c *Config) Validate() error {
 		if subscription.Limit < 0 || subscription.Limit > MaxSubscriptionLimit {
 			return fmt.Errorf("subscription %s limit must be between 1 and %d, or zero for the default", subscription.ID, MaxSubscriptionLimit)
 		}
-		if err := validateFilterOrder("subscription "+subscription.ID, subscription.Enabled, subscription.Order, orderSeen); err != nil {
+		if err := validateFilterOrder("subscription "+subscription.ID, subscription.Order); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// validateFilterOrder checks one position of the player filter and remembers
-// who claimed it. Sources and subscriptions share the filter, so they also
-// share the set of positions; only enabled entries reach that filter and can
-// therefore collide.
-func validateFilterOrder(owner string, enabled bool, order *int, seen map[int]string) error {
+// validateFilterOrder checks one order of the player filter. Sources and
+// subscriptions share that filter, so both lists are read the same way: an
+// order has to start at 1, and repeated or skipped positions are resolved when
+// the filter is built rather than rejected here.
+func validateFilterOrder(owner string, order *int) error {
 	if order == nil {
 		return nil
 	}
 	if *order < 1 {
 		return fmt.Errorf("%s order must be at least 1", owner)
 	}
-	if !enabled {
-		return nil
-	}
-	if other, ok := seen[*order]; ok {
-		return fmt.Errorf("%s order %d is already used by %s", owner, *order, other)
-	}
-	seen[*order] = owner
 	return nil
 }
 
@@ -1137,6 +1201,64 @@ func (c *Config) referencedTTSServices() map[string]bool {
 		}
 	}
 	return referenced
+}
+
+// validateTagTexts checks the shared dictionary the tag rules read from. Every
+// declared entry has to name at least one language and carry text for it, so a
+// rule can never resolve to a badge without a word in it.
+func (c *Config) validateTagTexts() error {
+	for key, text := range c.TagTexts {
+		if strings.TrimSpace(key) == "" {
+			return errors.New("tag_texts contains an entry without a key")
+		}
+		if len(text) == 0 {
+			return fmt.Errorf("tag_texts %s must contain at least one language", key)
+		}
+		hasText := false
+		for language, value := range text {
+			if strings.TrimSpace(language) == "" {
+				return fmt.Errorf("tag_texts %s contains an entry without a language code", key)
+			}
+			if strings.TrimSpace(value) != "" {
+				hasText = true
+			}
+		}
+		if !hasText {
+			return fmt.Errorf("tag_texts %s must contain text for one of its languages", key)
+		}
+	}
+	return nil
+}
+
+// validateTagRule checks one tag block against the dictionary it references. A
+// block without a type is how a source turns off a default badge, so it is
+// accepted as long as it carries nothing else; a rule that does name a type
+// has to be complete.
+func (c *Config) validateTagRule(field string, rule *TagRuleConfig) error {
+	if rule == nil {
+		return nil
+	}
+	switch ruleType := strings.ToLower(strings.TrimSpace(rule.Type)); ruleType {
+	case "":
+		if rule.Value != 0 || strings.TrimSpace(rule.Text) != "" {
+			return fmt.Errorf("%s.type must not be empty", field)
+		}
+		return nil
+	case TagRuleTypeLength:
+		if rule.Value < 1 {
+			return fmt.Errorf("%s.value must be a positive character count", field)
+		}
+	default:
+		return fmt.Errorf("%s has unsupported type %q; supported types are %q", field, rule.Type, TagRuleTypeLength)
+	}
+	key := strings.TrimSpace(rule.Text)
+	if key == "" {
+		return fmt.Errorf("%s.text must reference an entry of tag_texts", field)
+	}
+	if _, ok := c.TagTexts[key]; !ok {
+		return fmt.Errorf("%s references unknown tag_texts entry %q", field, rule.Text)
+	}
+	return nil
 }
 
 func (c *Config) validateGeneration(field string, generation GenerationConfig) error {
@@ -1473,4 +1595,47 @@ func (c *Config) EffectivePodcast(source SourceConfig) PodcastConfig {
 		result.MaxAge = source.Podcast.MaxAge
 	}
 	return result
+}
+
+// EffectiveTag returns the badge rule a source shows. A source that declares
+// its own tag block replaces the default one as a whole, so an empty block
+// turns the badge off instead of inheriting it; nil means the deployment has
+// no badge at all.
+func (c *Config) EffectiveTag(source SourceConfig) *TagRuleConfig {
+	if source.Tag != nil {
+		return source.Tag
+	}
+	return c.Defaults.Tag
+}
+
+// TagForArticle reports the badge text an episode owner shows for an article of
+// the given character count, keyed by language, or nil when no rule applies. A
+// source with its own tag block overrides the default, and a subscription,
+// which cannot declare one, follows the default. Adding a rule type means
+// adding a case to the switch in evaluateTag.
+// TagForArticle 返回某个节目归属方对给定字符数的文章应显示的标识文案（按语言给出），
+// 没有规则命中时返回 nil。来源自己的 tag 覆盖默认值，订阅无法声明标识、始终跟随默认
+// 规则；新增规则类型就是在 evaluateTag 里加一个分支。
+func (c *Config) TagForArticle(sourceID string, articleLength int) TagText {
+	rule := c.Defaults.Tag
+	if source, ok := c.Source(sourceID); ok {
+		rule = c.EffectiveTag(source)
+	}
+	return c.evaluateTag(rule, articleLength)
+}
+
+// evaluateTag applies one rule to one article. A nil rule, and a rule whose
+// type is empty, tag nothing, which keeps an unconfigured deployment on the
+// behaviour it had before this setting existed.
+func (c *Config) evaluateTag(rule *TagRuleConfig, articleLength int) TagText {
+	if rule == nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(rule.Type)) {
+	case TagRuleTypeLength:
+		if articleLength >= rule.Value {
+			return c.TagTexts[strings.TrimSpace(rule.Text)]
+		}
+	}
+	return nil
 }

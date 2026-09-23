@@ -1264,6 +1264,13 @@ function updateEpisodeRow(row, episode, slot = null) {
   const sourceLabel = byDate ? episodeDateLabel(episode) : sourceName(episode.sourceID);
   if (source.textContent !== sourceLabel) source.textContent = sourceLabel;
 
+  // The badge a source rule adds stays beside that column, which carries the
+  // feed name or the date. It only takes space once it has a text.
+  const tag = row.querySelector(".episode-tag");
+  const tagLabel = tagText(episode.tag);
+  if (tag.textContent !== tagLabel) tag.textContent = tagLabel;
+  tag.classList.toggle("is-visible", tagLabel !== "");
+
   // The heading can also hold the admin badge, so the title is written into a
   // text node of its own rather than replacing everything the heading holds.
   const title = row.querySelector(".episode-title");
@@ -2012,11 +2019,38 @@ function normalizeEpisode(episode) {
     // The demo page and older responses only describe playable episodes.
     state: EPISODE_STATES.includes(reportedState) ? reportedState : audioURL ? "ready" : "pending",
     stage: String(episode.stage || ""),
+    // The badge keeps every language the API sent, so the page resolves the one
+    // it renders while drawing a row; that also lets one saved entry read
+    // correctly under both language routes, which share this browser's storage.
+    tag: normalizeTag(episode.tag),
     publishedAt,
     durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
     dayKey: publishedAt ? dateKey(publishedAt) : "",
     sortTime: publishedAt?.getTime() || 0,
   };
+}
+
+// A source rule sends its badge as a map of language to text. Anything without
+// a language that carries text is treated as no badge at all.
+function normalizeTag(tag) {
+  if (!tag || typeof tag !== "object" || Array.isArray(tag)) return null;
+  return Object.values(tag).some((value) => typeof value === "string" && value !== "")
+    ? tag
+    : null;
+}
+
+// What the page prints on a badge: the text of its own language, then the base
+// language of that page ("zh-CN" reads "zh"), then English, and finally any
+// text the deployment did provide.
+function tagText(tag) {
+  if (!tag) return "";
+  const candidate =
+    tag[copy.lang] ||
+    tag[copy.lang.split("-")[0]] ||
+    tag.en ||
+    Object.values(tag).find((value) => typeof value === "string" && value !== "") ||
+    "";
+  return typeof candidate === "string" ? candidate : "";
 }
 
 // A row is written on every poll, so the cell is only touched when the value it
@@ -2620,6 +2654,7 @@ function snapshotFromEpisode(episode, addedAt) {
     durationSeconds: episode.durationSeconds || 0,
     state: episode.state,
     stage: episode.stage || "",
+    tag: episode.tag || null,
     publishedAt: episode.publishedAt ? episode.publishedAt.toISOString() : "",
     addedAt: addedAt || Date.now(),
   };
@@ -2638,6 +2673,7 @@ function episodeFromLaterRecord(record) {
     audioURL,
     state: EPISODE_STATES.includes(reportedState) ? reportedState : audioURL ? "ready" : "pending",
     stage: String(record.stage || ""),
+    tag: normalizeTag(record.tag),
     publishedAt,
     durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
     dayKey: publishedAt ? dateKey(publishedAt) : "",
@@ -2688,7 +2724,8 @@ function syncListenLaterSnapshots() {
       next.audioURL === record.audioURL &&
       next.state === record.state &&
       next.durationSeconds === record.durationSeconds &&
-      next.stage === record.stage
+      next.stage === record.stage &&
+      tagText(next.tag) === tagText(record.tag)
     ) {
       return record;
     }
@@ -3808,6 +3845,9 @@ function demoPayload() {
     date.setHours(hour, minute, 0, 0);
     return date.toISOString();
   };
+  // Two rows carry the badge a source rule adds, so the demo shows the chip
+  // without a deployment having to configure one.
+  const tagged = (episode, tag) => ({ ...episode, tag });
   return {
     sources: [
       { id: "zhihu-daily", name: demoContent.sources[0] },
@@ -3815,8 +3855,14 @@ function demoPayload() {
       { id: "zhihu-topic", name: demoContent.sources[2] },
     ],
     episodes: [
-      demoEpisode("demo-1", "zhihu-daily", demoContent.titles[0], at(today, 7, 30)),
-      demoEpisode("demo-2", "v2ex-hot", demoContent.titles[1], at(today, 6, 45)),
+      tagged(demoEpisode("demo-1", "zhihu-daily", demoContent.titles[0], at(today, 7, 30)), {
+        en: "Long read",
+        "zh-CN": "长文章",
+      }),
+      tagged(demoEpisode("demo-2", "v2ex-hot", demoContent.titles[1], at(today, 6, 45)), {
+        en: "Long read",
+        "zh-CN": "长文章",
+      }),
       demoEpisode("demo-3", "zhihu-topic", demoContent.titles[2], at(today, 5, 40)),
       demoEpisode("demo-4", "zhihu-daily", demoContent.titles[3], at(today, 5, 10)),
       demoEpisode("demo-5", "v2ex-hot", demoContent.titles[4], at(today, 4, 20)),
