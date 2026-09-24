@@ -62,18 +62,48 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
     steps:
-      - name: Create GitHub release
+      # 发布说明需要完整的提交历史、全部 tag 与远端分支信息。
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check for existing release
+        id: existing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "GitHub release $GITHUB_REF_NAME already exists"
-            exit 0
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # 逐条生成提交列表（提交信息 + 分支 + 作者 + 日期），
+      # 取代 `--generate-notes` 只给出一条 Full Changelog 链接的结果。
+      - name: Generate release notes
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/generate-release-notes.sh release-notes.md
+
+      - name: Show release notes
+        if: steps.existing.outputs.exists == 'false'
+        run: cat release-notes.md
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
-            --generate-notes \
+            --notes-file release-notes.md \
             --title "$GITHUB_REF_NAME"
