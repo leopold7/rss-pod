@@ -4,15 +4,30 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # 手动触发：为“已存在的 tag”重建 Release（镜像不重新推送）。
+  # 例如 Release 被删掉但 tag 还在时，从默认分支运行：
+  #   gh workflow run release.yml -f tag=v0.9.1-patch.5
+  # 注意：tag 推送时运行的是该 tag 提交点上的 workflow 文件，
+  # 这个入口则始终使用默认分支上的最新版本。
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的 tag，例如 v0.9.1-patch.5（仅重建 Release 说明）"
+        required: true
+        type: string
 
 permissions: {}
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # 要发布/生成说明的 tag：手动触发取输入，tag 推送取 github.ref_name
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   publish:
+    # 手动触发时镜像已经存在，只重新生成 Release，不重复推送镜像
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,27 +74,39 @@ jobs:
 
   release:
     needs: publish
+    # publish 被跳过（手动触发）或成功时才继续
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     concurrency:
-      group: release-${{ github.ref }}
+      # 同一 tag 的重跑串行执行（job 级 concurrency 不支持 env 上下文）
+      group: release-${{ github.event.inputs.tag || github.ref_name }}
       cancel-in-progress: false
     steps:
-      # 发布说明需要完整的提交历史、全部 tag 与远端分支信息。
+      # 检出默认分支：生成说明需要最新版脚本 + 完整历史 + 全部 tag，
+      # 而 tag 提交点上可能还没有这个脚本（历史 tag 重跑时尤其明显）。
       - name: Check out repository
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Check release tag exists
+        run: |
+          if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::error::tag ${RELEASE_TAG} 不存在，请检查 workflow_dispatch 的 tag 输入"
+            exit 1
+          fi
 
       - name: Check for existing release
         id: existing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "GitHub release $GITHUB_REF_NAME already exists"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub release $RELEASE_TAG already exists, skipping"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -102,8 +129,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --notes-file release-notes.md \
-            --title "$GITHUB_REF_NAME"
+            --title "$RELEASE_TAG"

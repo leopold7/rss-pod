@@ -11,6 +11,8 @@
 #     bash .github/scripts/generate-release-notes.sh [输出文件]
 #
 # 可选环境变量：
+#   RELEASE_TAG        要生成说明的 tag；优先于 GITHUB_REF_NAME
+#                      （workflow_dispatch 手动触发时 GITHUB_REF_NAME 是分支名）
 #   GITHUB_SERVER_URL  默认 https://github.com
 #   GH_TOKEN           存在时通过 GitHub API 补充提交所属的 PR 源分支
 #   MAX_COMMITS        找不到上一个版本 tag 时最多列出的提交数，默认 200
@@ -18,7 +20,11 @@
 
 set -euo pipefail
 
-tag="${GITHUB_REF_NAME:?需要设置 GITHUB_REF_NAME}"
+tag="${RELEASE_TAG:-${GITHUB_REF_NAME:-}}"
+if [ -z "$tag" ]; then
+  echo "generate-release-notes: 需要设置 RELEASE_TAG 或 GITHUB_REF_NAME" >&2
+  exit 1
+fi
 tag="${tag#refs/tags/}"
 repo="${GITHUB_REPOSITORY:-}"
 server="${GITHUB_SERVER_URL:-https://github.com}"
