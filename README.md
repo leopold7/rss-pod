@@ -33,9 +33,6 @@ docker pull ghcr.io/leopold7/rss-pod:latest
 
 ---
 
-
----
-
 <div align="center">
   <img src="web/icons/apple-touch-icon.png" width="112" alt="rss-pod logo">
   <h1>rss-pod</h1>
