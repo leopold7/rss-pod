@@ -400,6 +400,12 @@ input:focus-visible {
   font-weight: 600;
 }
 
+/* The display section sets its layout choice above a switch of its own, so the
+   two read as one block rather than as two settings. */
+#settings-display-section .settings-switches {
+  margin-top: 12px;
+}
+
 /* The segmented control repeats the language switcher so both header
    preferences read the same way. */
 .settings-segment {
@@ -634,13 +640,23 @@ input:focus-visible {
   height: 22px;
 }
 
+/* The tab row and the button that opens the whole category list share one line:
+   the row takes the room and scrolls, the button keeps its own width beside it. */
+.date-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* The labels are set in nowrap type, so the row can outgrow a tablet however
    few tabs it lists: it scrolls sideways instead of being squeezed, and the
    tabs keep their full width rather than running into each other. */
 .date-tabs {
   display: flex;
+  flex: 1 1 auto;
   align-items: stretch;
   gap: 34px;
+  min-width: 0;
   min-height: 66px;
   border-bottom: 0;
   overflow-x: auto;
@@ -725,6 +741,49 @@ input:focus-visible {
 
 .date-tabs.is-category .date-tab {
   padding-inline: 12px;
+}
+
+/* A deployment that follows many feeds gives the category row more entries than
+   it can show, so a button joins it and opens the whole list at once. The row it
+   joins is the header tabs while the list is grouped by feed and the row of
+   sources under the header while it is grouped by date, so both are masked here.
+   The button is only there while the row really scrolls, and the row fades out
+   towards it so a name leaves the edge gradually instead of being cut off by it.
+   How far the fade reaches is set by the script: it shortens as the end of the
+   scroll comes into view, because there the entry beside the button is whole and
+   has nothing left to fade towards. */
+.date-tabs.has-overflow,
+.source-filters.has-overflow {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--category-fade, 0px)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--category-fade, 0px)), transparent 100%);
+}
+
+.category-menu-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid rgb(191 213 236 / 66%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 72%);
+  color: var(--navy);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 82%);
+  cursor: pointer;
+}
+
+.category-menu-toggle:hover {
+  border-color: rgb(117 175 237 / 72%);
+  background: var(--surface-blue);
+  color: var(--blue-hover);
+}
+
+.category-menu-toggle svg {
+  width: 25px;
+  height: 25px;
+  fill: currentColor;
 }
 
 /* The "all" control carries a caret that opens the two choices as a menu. The
@@ -1744,14 +1803,16 @@ input:focus-visible {
 
   .github-link,
   .theme-toggle,
-  .settings-toggle {
+  .settings-toggle,
+  .category-menu-toggle {
     width: 42px;
     height: 42px;
   }
 
   .github-link img,
   .theme-toggle svg,
-  .settings-toggle svg {
+  .settings-toggle svg,
+  .category-menu-toggle svg {
     width: 23px;
     height: 23px;
   }
@@ -1774,6 +1835,12 @@ input:focus-visible {
     width: auto;
     min-width: 96px;
     padding-inline: 10px;
+  }
+
+  /* A phone shows fewer tabs at once, so the button sits closer to the row it
+     belongs to. */
+  .date-tabs-row {
+    gap: 8px;
   }
 
   .date-tab {
@@ -1804,8 +1871,12 @@ input:focus-visible {
     font-size: 11px;
   }
 
+  /* The row keeps the button that opens the whole list beside it on a phone
+     too, so the two share the line the way they do on a wider screen. */
   .source-filter-section {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 8px 10px;
   }
 
@@ -2245,6 +2316,11 @@ input:focus-visible {
   background: rgb(110 168 251 / 16%);
 }
 
+:root[data-theme="dark"] .popup-menu-count {
+  border-color: rgb(80 116 160 / 50%);
+  background: rgb(255 255 255 / 7%);
+}
+
 :root[data-theme="dark"] .episode-title.is-listened {
   color: var(--muted);
 }
@@ -2260,6 +2336,11 @@ input:focus-visible {
   display: grid;
   min-width: 190px;
   max-width: min(280px, calc(100vw - 24px));
+  /* The category menu lists every feed the deployment follows, so a long one
+     scrolls inside the menu instead of running past the bottom of the screen. */
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  scrollbar-color: var(--line-strong) transparent;
   padding: 6px;
   border: 1px solid var(--glass-border);
   border-radius: 14px;
@@ -2338,6 +2419,23 @@ input:focus-visible {
   fill: var(--blue);
 }
 
+/* The number behind an entry, in the same chip the tab row counts a feed with. */
+.popup-menu-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid rgb(174 207 240 / 62%);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 66%);
+  color: currentColor;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Dark theme. The device preference and the header switch both resolve to
    data-theme on the root element, so one variable set plus overrides for the
    surfaces that are not variable-driven is enough. */
@@ -2413,13 +2511,13 @@ input:focus-visible {
   box-shadow: 0 4px 12px rgb(0 0 0 / 24%);
 }
 
-:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle) {
+:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle, .category-menu-toggle) {
   border-color: rgb(80 116 160 / 52%);
   background: rgb(255 255 255 / 8%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
-:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle):hover {
+:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle, .category-menu-toggle):hover {
   border-color: rgb(110 168 251 / 58%);
   background: rgb(110 168 251 / 16%);
 }

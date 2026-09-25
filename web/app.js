@@ -5,6 +5,7 @@ const THEME_KEY = "rss-pod.theme";
 const THEME_MODES = ["system", "light", "dark"];
 const DISPLAY_KEY = "rss-pod.display-mode";
 const DISPLAY_MODES = ["date", "category"];
+const CATEGORY_ICON_KEY = "rss-pod.category-icon";
 const DEFAULT_CATEGORY_KEY = "rss-pod.default-category";
 const FIRST_VIEW_KEY = "rss-pod.first-view";
 const PLAYER_DRAWER_KEY = "rss-pod.player-drawer";
@@ -51,6 +52,10 @@ const MARQUEE_MIN_SECONDS = 10;
 const MARQUEE_MAX_SECONDS = 60;
 // The crawl takes a third of the cycle in either direction.
 const MARQUEE_TRAVEL_SHARE = 0.34;
+// How far, at most, the category row fades out towards the button that opens
+// the whole list. A phone shows fewer tabs at once, so the fade is a shorter
+// stretch of the row there.
+const CATEGORY_FADE_PX = { wide: 92, small: 74 };
 
 // Material Symbols Rounded, the same set as the icons under web/icons.
 const ICON_PLAY =
@@ -87,9 +92,11 @@ const copy = {
     themeSettingLabel: "Color theme",
     displaySettingLabel: "Layout",
     displayModes: { date: "By date", category: "By feed" },
+    categoryIconSettingLabel: "Show the category icon",
     categorySettingLabel: "Default category",
     firstViewSettingLabel: "First category shows",
     categoryTabsLabel: "Choose a feed",
+    categoryMenuLabel: "All categories",
     dateTabsLabel: "Choose a date",
     carouselRole: "carousel",
     slideRole: "slide",
@@ -199,9 +206,11 @@ const copy = {
     themeSettingLabel: "主题设置",
     displaySettingLabel: "显示设置",
     displayModes: { date: "按日期", category: "按分类" },
+    categoryIconSettingLabel: "显示分类图标",
     categorySettingLabel: "默认分类",
     firstViewSettingLabel: "首个分类显示",
     categoryTabsLabel: "选择分类",
+    categoryMenuLabel: "所有分类",
     dateTabsLabel: "选择日期",
     carouselRole: "轮播",
     slideRole: "幻灯片",
@@ -351,6 +360,8 @@ const elements = {
   settingsThemeSection: document.querySelector("#settings-theme-section"),
   settingsThemeLabel: document.querySelector("#settings-theme-label"),
   settingsDisplayLabel: document.querySelector("#settings-display-label"),
+  categoryIconLabel: document.querySelector("#settings-category-icon-label"),
+  categoryIconToggle: document.querySelector("#settings-category-icon"),
   settingsCategoryLabel: document.querySelector("#settings-category-label"),
   settingsCategorySelect: document.querySelector("#settings-default-category"),
   settingsFirstViewLabel: document.querySelector("#settings-first-view-label"),
@@ -393,6 +404,8 @@ const elements = {
   displayModeButtons: [...document.querySelectorAll("[data-display-mode]")],
   themeToggle: document.querySelector("#theme-toggle"),
   dateTabs: document.querySelector("#date-tabs"),
+  dateTabsRow: document.querySelector("#date-tabs-row"),
+  categoryMenuToggle: document.querySelector("#category-menu-toggle"),
   noticeRegion: document.querySelector("#notice-region"),
   noticeContent: document.querySelector("#notice-content"),
   noticeDismiss: document.querySelector("#notice-dismiss"),
@@ -429,6 +442,9 @@ let themePreference = readThemePreference();
 // The list groups by day unless the listener picked categories in the settings
 // panel. Both choices live in this browser for the current site.
 let displayMode = readDisplayPreference();
+// The button that opens the whole category list is offered unless it has been
+// turned off, so the absence of a stored choice means yes.
+let showCategoryIcon = readStoredString(CATEGORY_ICON_KEY) !== "off";
 // The feed the list opens on, and what the shared first tab lists. Both are
 // applied to the first payload of the page, so a later poll never pulls a
 // listener back after they swiped elsewhere. The first tab is read first, since
@@ -524,6 +540,7 @@ reducedMotion.addEventListener("change", () => applyTitleMarquee());
 bindPlayerEvents();
 bindNoticeEvents();
 initPopupMenu();
+initCategoryMenu();
 renderSpeed();
 loadNotice();
 loadPlayerConfig();
@@ -739,6 +756,7 @@ function renderTabs() {
       );
       elements.dateTabs.append(shared ? createSharedControl(tab) : tab);
     });
+    syncCategoryMenu();
     return;
   }
 
@@ -756,6 +774,145 @@ function renderTabs() {
       ),
     );
   }
+  syncCategoryMenu();
+}
+
+// Where the layout puts the feeds decides where the button goes with them: the
+// header tabs carry them while the list is grouped by feed, and the row of
+// sources under the header carries them while it is grouped by date. The row
+// that is left over goes back to plain.
+function categoryRow() {
+  return displayMode === "category" ? elements.dateTabs : elements.sourceFilters;
+}
+
+function categoryRowHost() {
+  return displayMode === "category" ? elements.dateTabsRow : elements.sourceFilterSection;
+}
+
+// The category row is measured rather than guessed at: a deployment that
+// follows many feeds gives it more entries than it can show, and only then does
+// the button beside it appear. The fade is a class of its own, so the row stays
+// plain while everything fits.
+function syncCategoryMenu() {
+  const toggle = elements.categoryMenuToggle;
+  const row = categoryRow();
+  if (!toggle || !row) return;
+  for (const other of [elements.dateTabs, elements.sourceFilters]) {
+    if (other && other !== row) {
+      other.classList.remove("has-overflow");
+      other.style.removeProperty("--category-fade");
+    }
+  }
+  // The button follows the row it belongs to, so switching the layout moves it
+  // instead of leaving a second copy of it behind.
+  const host = categoryRowHost();
+  if (host && toggle.parentElement !== host) host.append(toggle);
+  // The row is only offered the button -- and the fade that goes with it --
+  // while the switch in the settings panel asks for it.
+  const scrollable = showCategoryIcon && row.scrollWidth - row.clientWidth > 1;
+  if (!scrollable) closeCategoryMenu();
+  toggle.hidden = !scrollable;
+  row.classList.toggle("has-overflow", scrollable);
+  syncCategoryFade();
+}
+
+// How far the row fades out towards the button. The fade reaches as far as the
+// entries that are still hidden beyond the edge, and no further: at the end of
+// the scroll there is nothing left to fade towards, so the entry beside the
+// button is drawn whole. The value lives in a custom property the row is masked
+// with.
+function syncCategoryFade() {
+  const row = categoryRow();
+  if (!row) return;
+  const limit = smallViewport.matches ? CATEGORY_FADE_PX.small : CATEGORY_FADE_PX.wide;
+  const hidden = row.classList.contains("has-overflow")
+    ? row.scrollWidth - row.clientWidth - row.scrollLeft
+    : 0;
+  const fade = `${Math.round(Math.max(0, Math.min(limit, hidden)))}px`;
+  if (row.style.getPropertyValue("--category-fade") !== fade) {
+    row.style.setProperty("--category-fade", fade);
+  }
+}
+
+// The button opens the row as a menu: every feed the deployment follows, the
+// whole list, and the episodes saved on this device. It is the same menu the
+// "all" caret opens, with the feeds the row can only reach by scrolling added
+// to it, and it reads the same in either layout -- while the list is grouped by
+// date a feed filters the day that is on screen, which is what its count says.
+function openCategoryMenu() {
+  const toggle = elements.categoryMenuToggle;
+  if (!toggle) return;
+  const byLater = primaryView === LATER_SLOT;
+  openPopupMenu({
+    anchor: toggle,
+    label: copy.categoryMenuLabel,
+    items: [
+      {
+        label: copy.allSources,
+        count: menuCount("all"),
+        checked: !byLater && state.activeSource === "all",
+        onSelect: () => selectPrimarySource("all"),
+      },
+      {
+        label: copy.listenLater,
+        count: menuCount(LATER_SLOT),
+        checked: byLater,
+        onSelect: () => selectPrimarySource(LATER_SLOT),
+      },
+      ...state.sources.map((source) => ({
+        label: source.name,
+        count: menuCount(source.id),
+        checked: !byLater && state.activeSource === source.id,
+        onSelect: () => selectPrimarySource(source.id),
+      })),
+    ],
+  });
+}
+
+// How many episodes an entry would put on the page, counted the way that page
+// counts them: the whole three-day window while the list is grouped by feed and
+// the day in front while it is grouped by date. That is the number the same
+// choice carries in the tab row, so the menu and the row agree.
+function menuCount(sourceID) {
+  const episodes = sourceID === LATER_SLOT ? listenLaterEpisodes() : state.episodes;
+  const day = displayMode === "date" ? state.activeDate : "";
+  return episodes.filter(
+    (episode) =>
+      (sourceID === LATER_SLOT || inSource(episode, sourceID)) && (!day || episode.dayKey === day),
+  ).length;
+}
+
+// A menu entry picks the page the row would have picked: a feed lists every
+// episode of it, and the saved list is the shared first tab.
+function selectPrimarySource(sourceID) {
+  if (sourceID === LATER_SLOT) {
+    setPrimaryView(LATER_SLOT);
+    selectSlot({ source: "all" });
+    return;
+  }
+  setPrimaryView("all");
+  selectSlot({ source: sourceID });
+}
+
+function closeCategoryMenu() {
+  if (popupMenuAnchor === elements.categoryMenuToggle) closePopupMenu();
+}
+
+function initCategoryMenu() {
+  const toggle = elements.categoryMenuToggle;
+  if (!toggle) return;
+  toggle.addEventListener("click", () => {
+    if (popupMenuAnchor === toggle) closePopupMenu();
+    else openCategoryMenu();
+  });
+  // Either row can be the one the feeds are listed in, so both report their
+  // scrolling; the measurement of that row is taken again on every redraw and
+  // whenever the viewport changes.
+  for (const row of [elements.dateTabs, elements.sourceFilters]) {
+    row?.addEventListener("scroll", () => syncCategoryFade(), { passive: true });
+  }
+  window.addEventListener("resize", () => syncCategoryMenu());
+  syncCategoryMenu();
 }
 
 function createTab(key, label, count, selected, onSelect) {
@@ -925,6 +1082,9 @@ function renderSourceFilters() {
     // saved list is reachable without changing the layout.
     elements.sourceFilters.append(shared ? createSharedControl(button) : button);
   }
+  // The sources are the category row in this layout, and the row may have just
+  // come back on screen, so the button beside them is measured here too.
+  syncCategoryMenu();
 }
 
 // The header controls read as one chain rather than as two rows: in date mode
@@ -2159,6 +2319,7 @@ function applyLocale() {
   elements.settingsTitle.textContent = copy.settingsTitle;
   elements.settingsThemeLabel.textContent = copy.themeSettingLabel;
   elements.settingsDisplayLabel.textContent = copy.displaySettingLabel;
+  elements.categoryIconLabel.textContent = copy.categoryIconSettingLabel;
   elements.settingsCategoryLabel.textContent = copy.categorySettingLabel;
   elements.settingsFirstViewLabel.textContent = copy.firstViewSettingLabel;
   elements.settingsPersonalLabel.textContent = copy.personalSettingLabel;
@@ -2198,6 +2359,8 @@ function applyLocale() {
   elements.noticeDismiss.title = copy.dismissNotice;
   elements.sourceFilterSection.setAttribute("aria-label", copy.sourceSectionLabel);
   elements.sourceFilterLabel.textContent = copy.sourceFilterLabel;
+  elements.categoryMenuToggle.setAttribute("aria-label", copy.categoryMenuLabel);
+  elements.categoryMenuToggle.title = copy.categoryMenuLabel;
   elements.episodeRegion.setAttribute("aria-label", copy.episodeRegionLabel);
   elements.playerDock.setAttribute("aria-label", copy.playerLabel);
   elements.playToggle.setAttribute("aria-label", copy.play);
@@ -2302,6 +2465,9 @@ function initSettings() {
   for (const button of elements.displayModeButtons) {
     button.addEventListener("click", () => setDisplayMode(button.dataset.displayMode));
   }
+  elements.categoryIconToggle?.addEventListener("click", () =>
+    setShowCategoryIcon(!showCategoryIcon),
+  );
   if (elements.settingsCategorySelect) {
     elements.settingsCategorySelect.addEventListener("change", () =>
       setDefaultCategory(elements.settingsCategorySelect.value),
@@ -2344,6 +2510,17 @@ function renderDisplaySettings() {
   for (const button of elements.displayModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.displayMode === displayMode));
   }
+  setSwitchState(elements.categoryIconToggle, showCategoryIcon);
+}
+
+// The category button can be put away, and it is the only part of the scrolling
+// row that goes with it: without it the row is left plain, without the fade.
+function setShowCategoryIcon(enabled) {
+  showCategoryIcon = enabled;
+  if (enabled) removeStorage(CATEGORY_ICON_KEY);
+  else writeStorage(CATEGORY_ICON_KEY, "off");
+  renderDisplaySettings();
+  syncCategoryMenu();
 }
 
 // The default feed is a dropdown rather than a segmented control, because a
@@ -2930,6 +3107,15 @@ function openPopupMenu({ anchor = null, x = null, y = null, items = [], label = 
     text.className = "popup-menu-label";
     text.textContent = item.label;
     button.append(text);
+    // An entry that stands for a page can carry what that page holds, so the
+    // menu reads like the tab row it opens.
+    if (item.count !== undefined && item.count !== null) {
+      const count = document.createElement("span");
+      count.className = "popup-menu-count";
+      count.textContent = String(item.count);
+      count.setAttribute("aria-label", copy.episodeCount(item.count));
+      button.append(count);
+    }
     const mark = document.createElement("span");
     mark.className = "popup-menu-mark";
     if (item.checked) mark.append(createIcon(ICON_CHECK, "popup-menu-check"));
@@ -2963,10 +3149,17 @@ function positionPopupMenu(menu, anchor, x, y) {
   );
   let top = wantedTop;
   if (top + size.height > window.innerHeight - margin) {
-    top = anchorRect ? anchorRect.top - size.height - 6 : y - size.height;
+    const above = anchorRect ? anchorRect.top - size.height - 6 : y - size.height;
+    // A menu taller than the room above its anchor stays below and scrolls
+    // inside its own height instead of being pulled up under the header it
+    // opened from.
+    if (above >= margin) top = above;
   }
+  // Whichever side it ended up on, the menu stays inside the viewport; one that
+  // is taller than the room it has keeps its top and scrolls instead.
+  const lowest = Math.max(margin, window.innerHeight - margin - size.height);
   menu.style.left = `${Math.round(left)}px`;
-  menu.style.top = `${Math.round(Math.max(margin, top))}px`;
+  menu.style.top = `${Math.round(Math.max(margin, Math.min(top, lowest)))}px`;
 }
 
 function closePopupMenu({ focusAnchor = false } = {}) {
@@ -3948,7 +4141,7 @@ async function setupAdmin() {
     <button type="submit">${adminCopy.login}</button></div>
     </form><p id="admin-message" role="status" aria-live="polite"></p>
     <button id="admin-logout" type="button" hidden>${adminCopy.logout}</button>`;
-  elements.dateTabs.before(panel);
+  elements.dateTabsRow.before(panel);
   const logoutButton = panel.querySelector("#admin-logout");
   elements.languageSwitcher.before(logoutButton);
   const form = panel.querySelector("form");
@@ -3996,9 +4189,9 @@ function setAdminPlayerVisible(visible) {
   panel.classList.toggle("is-authenticated", visible);
   document.body.classList.toggle("admin-authenticated", visible);
   document.body.classList.toggle("admin-locked", !visible);
-  if (visible) elements.dateTabs.before(panel);
+  if (visible) elements.dateTabsRow.before(panel);
   else document.querySelector(".app-shell").append(panel);
-  for (const element of [elements.dateTabs, elements.sourceFilterSection, elements.episodeRegion, elements.playerDock]) element.hidden = !visible;
+  for (const element of [elements.dateTabsRow, elements.sourceFilterSection, elements.episodeRegion, elements.playerDock]) element.hidden = !visible;
   document.querySelector("#admin-login").hidden = visible;
   document.querySelector("#admin-logout").hidden = !visible;
 }

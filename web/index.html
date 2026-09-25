@@ -94,6 +94,26 @@
                     <button type="button" data-display-mode="date">By date</button>
                     <button type="button" data-display-mode="category">By feed</button>
                   </div>
+                  <!-- The button that opens the whole category list can be put
+                       away in either layout; the row of feeds then scrolls on
+                       its own, without the fade. -->
+                  <div class="settings-switches">
+                    <div class="settings-switch-row">
+                      <span id="settings-category-icon-label" class="settings-switch-text"
+                        >Show the category icon</span
+                      >
+                      <button
+                        id="settings-category-icon"
+                        class="settings-switch"
+                        type="button"
+                        role="switch"
+                        aria-checked="true"
+                        aria-labelledby="settings-category-icon-label"
+                      >
+                        <span class="settings-switch-knob" aria-hidden="true"></span>
+                      </button>
+                    </div>
+                  </div>
                 </section>
                 <!-- The options are the feeds the deployment follows, so the
                      dropdown is filled in once the episode list has loaded. -->
@@ -290,7 +310,29 @@
           </button>
           <div id="notice-content" class="notice-content"></div>
         </section>
-        <nav id="date-tabs" class="date-tabs" aria-label="Choose a date" tabindex="-1"></nav>
+        <!-- The category row can list more feeds than a header can show, so a
+             button beside it opens the whole list at once. It is only shown
+             while that row really scrolls. -->
+        <div id="date-tabs-row" class="date-tabs-row">
+          <nav id="date-tabs" class="date-tabs" aria-label="Choose a date" tabindex="-1"></nav>
+          <button
+            id="category-menu-toggle"
+            class="category-menu-toggle"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-label="All categories"
+            title="All categories"
+            hidden
+          >
+            <svg viewBox="0 -960 960 960" aria-hidden="true">
+              <path
+                d="M160-240q-17 0-28.5-11.5T120-280q0-17 11.5-28.5T160-320h640q17 0 28.5 11.5T840-280q0 17-11.5 28.5T800-240H160Zm0-200q-17 0-28.5-11.5T120-480q0-17 11.5-28.5T160-520h640q17 0 28.5 11.5T840-480q0 17-11.5 28.5T800-440H160Zm0-200q-17 0-28.5-11.5T120-680q0-17 11.5-28.5T160-720h640q17 0 28.5 11.5T840-680q0 17-11.5 28.5T800-640H160Z"
+                fill="currentColor"
+              ></path>
+            </svg>
+          </button>
+        </div>
       </header>
 
       <section id="source-filter-section" class="source-filter-section" aria-label="Filter by source">

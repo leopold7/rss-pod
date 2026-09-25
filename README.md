@@ -263,7 +263,12 @@ player preferences which are stored in the current browser:
 - **Layout**: group the list by date, which is the default, or by feed. The
   category mode lists one tab per feed instead of one tab per day and shows the
   publish date of each article in place of the feed name, because the list only
-  ever covers three days.
+  ever covers three days. Whichever layout is on, the feeds share a single row,
+  the header tabs in category mode and the row of sources in date mode; once
+  that row outgrows the screen it scrolls, its tail fades out as it goes, and a
+  button joins it that opens every category at once, each entry counted, next to
+  "All" and "Listen later". The button is shown by default and can be turned off
+  again in the same panel, in which case the row is left plain.
 
 The player dock is a drawer as well. The handle in its top-right corner folds it
 down to a slim bar that keeps the play control and the current title, which hands
