@@ -116,17 +116,12 @@ func (w *PollSourceWorker) poll(ctx context.Context, args PollSourceArgs) error 
 			itemsExisting++
 			continue
 		}
-		var publishedAt *time.Time
-		if item.PublishedParsed != nil {
-			publishedAt = item.PublishedParsed
-		} else if item.UpdatedParsed != nil {
-			publishedAt = item.UpdatedParsed
-		}
+		publishedAt := feedItemPublishedAt(item, feed)
 		var feedItemID int64
 		err = tx.QueryRow(ctx, `
 			INSERT INTO feed_items (
 			    source_id, external_id, title, link, description, content, published_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()))
 			ON CONFLICT (source_id, external_id) DO NOTHING
 			RETURNING id
 		`, source.ID, externalID, item.Title, item.Link, item.Description, item.Content, publishedAt).Scan(&feedItemID)
@@ -138,7 +133,7 @@ func (w *PollSourceWorker) poll(ctx context.Context, args PollSourceArgs) error 
 				    link = $4,
 				    description = $5,
 				    content = $6,
-				    published_at = $7
+				    published_at = COALESCE($7, feed_items.published_at, now())
 				WHERE source_id = $1 AND external_id = $2
 				RETURNING id
 			`, source.ID, externalID, item.Title, item.Link, item.Description, item.Content, publishedAt).Scan(&feedItemID)
@@ -239,6 +234,25 @@ func filterFeedItems(items []*gofeed.Item, filter config.ItemFilter) []*gofeed.I
 		}
 	}
 	return kept
+}
+
+// feedItemPublishedAt resolves the timestamp an item is dated by. A feed item
+// that carries no date of its own falls back to the channel date, which gofeed
+// exposes as the feed's UpdatedParsed (lastBuildDate in RSS, updated in Atom),
+// so the player's time window never drops an article for having no timestamp.
+// When even the channel has none the caller stores NULL and the database dates
+// the row at its discovery time instead.
+func feedItemPublishedAt(item *gofeed.Item, feed *gofeed.Feed) *time.Time {
+	if item.PublishedParsed != nil {
+		return item.PublishedParsed
+	}
+	if item.UpdatedParsed != nil {
+		return item.UpdatedParsed
+	}
+	if feed.UpdatedParsed != nil {
+		return feed.UpdatedParsed
+	}
+	return nil
 }
 
 func feedItemID(sourceID string, item *gofeed.Item) string {

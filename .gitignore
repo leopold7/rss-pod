@@ -8,4 +8,5 @@ notice.md
 .vscode/
 push.bat
 release-tag.bat
+release-tag.py
 cmd/rss-pod/__debug_bin.exe

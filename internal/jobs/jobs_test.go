@@ -843,6 +843,61 @@ func TestFilterFeedItemsKeepsMatchingItemsInOrder(t *testing.T) {
 	}
 }
 
+// A feed such as 联合早报's realtime channel carries no pubDate per item, so the
+// poll has to date the article from the channel's lastBuildDate and leave only
+// the truly undated entry to the database's discovery time.
+func TestFeedItemPublishedAtFallsBackToTheChannelDate(t *testing.T) {
+	itemDate := time.Date(2026, time.September, 20, 8, 0, 0, 0, time.UTC)
+	updatedDate := time.Date(2026, time.September, 21, 8, 0, 0, 0, time.UTC)
+	buildDate := time.Date(2026, time.September, 22, 8, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name string
+		item *gofeed.Item
+		feed *gofeed.Feed
+		want *time.Time
+	}{
+		{
+			name: "item date wins",
+			item: &gofeed.Item{PublishedParsed: &itemDate, UpdatedParsed: &updatedDate},
+			feed: &gofeed.Feed{UpdatedParsed: &buildDate},
+			want: &itemDate,
+		},
+		{
+			name: "item updated date is the second choice",
+			item: &gofeed.Item{UpdatedParsed: &updatedDate},
+			feed: &gofeed.Feed{UpdatedParsed: &buildDate},
+			want: &updatedDate,
+		},
+		{
+			name: "channel lastBuildDate dates an item without its own",
+			item: &gofeed.Item{Title: "国际即时"},
+			feed: &gofeed.Feed{UpdatedParsed: &buildDate},
+			want: &buildDate,
+		},
+		{
+			name: "undated item leaves the timestamp to the database",
+			item: &gofeed.Item{Title: "国际即时"},
+			feed: &gofeed.Feed{},
+			want: nil,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := feedItemPublishedAt(test.item, test.feed)
+			if test.want == nil {
+				if got != nil {
+					t.Fatalf("feedItemPublishedAt() = %v, want nil", got)
+				}
+				return
+			}
+			if got == nil || !got.Equal(*test.want) {
+				t.Fatalf("feedItemPublishedAt() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestHTMLToText(t *testing.T) {
 	input := `<article><h1>标题</h1><p>第一段 <strong>重点</strong></p><script>不可见</script><p>第二段&amp;结尾</p></article>`
 	got := htmlToText(input)

@@ -98,6 +98,12 @@ CREATE INDEX IF NOT EXISTS feed_items_source_published_idx
 CREATE INDEX IF NOT EXISTS feed_items_discovered_idx
     ON feed_items (discovered_at, id);
 
+-- Items stored before a poll knew how to date an undated feed entry carry no
+-- published_at, and the player's time window drops rows without one. Dating them
+-- at the moment they were discovered restores them; once backfilled the
+-- statement matches nothing.
+UPDATE feed_items SET published_at = discovered_at WHERE published_at IS NULL;
+
 -- Items an operator deleted are remembered here so later polls skip them
 -- instead of generating the same episode again.
 CREATE TABLE IF NOT EXISTS ignored_feed_items (
