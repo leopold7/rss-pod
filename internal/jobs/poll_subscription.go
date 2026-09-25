@@ -302,10 +302,13 @@ func storeMirroredEpisode(
 	}
 	// The remote list may not date an episode at all; the mirror time then stands
 	// in for it, so the item keeps a timestamp of its own instead of relying on a
-	// NULL the player's time window would drop.
-	itemPublishedAt := subscriptionEpisodeDate(episode)
-	if itemPublishedAt == nil {
-		itemPublishedAt = &mirroredAt
+	// NULL the player's time window would drop. The mirror time is this run's
+	// clock, so only a new row may use it: a repeated pull of the same window
+	// must refresh the item without re-timing an episode that is already stored.
+	ownPublishedAt := subscriptionEpisodeDate(episode)
+	insertPublishedAt := ownPublishedAt
+	if insertPublishedAt == nil {
+		insertPublishedAt = &mirroredAt
 	}
 	var feedItemID int64
 	err := tx.QueryRow(ctx, `
@@ -316,10 +319,10 @@ func storeMirroredEpisode(
 		SET title = EXCLUDED.title,
 		    link = EXCLUDED.link,
 		    description = EXCLUDED.description,
-		    published_at = EXCLUDED.published_at
+		    published_at = COALESCE($7, feed_items.published_at)
 		RETURNING id
 	`, subscription.ID, externalID, episode.Title, episode.AudioURL,
-		subscriptionProvenance(subscription, episode), itemPublishedAt).Scan(&feedItemID)
+		subscriptionProvenance(subscription, episode), insertPublishedAt, ownPublishedAt).Scan(&feedItemID)
 	if err != nil {
 		return false, fmt.Errorf("store mirrored feed item: %w", err)
 	}

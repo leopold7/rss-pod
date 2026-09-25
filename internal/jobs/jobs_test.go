@@ -845,7 +845,9 @@ func TestFilterFeedItemsKeepsMatchingItemsInOrder(t *testing.T) {
 
 // A feed such as 联合早报's realtime channel carries no pubDate per item, so the
 // poll has to date the article from the channel's lastBuildDate and leave only
-// the truly undated entry to the database's discovery time.
+// the truly undated entry to the database's discovery time. The channel date is
+// the feed's build time, so it may only date a new row; re-polling keeps the
+// timestamp an item already carries.
 func TestFeedItemPublishedAtFallsBackToTheChannelDate(t *testing.T) {
 	itemDate := time.Date(2026, time.September, 20, 8, 0, 0, 0, time.UTC)
 	updatedDate := time.Date(2026, time.September, 21, 8, 0, 0, 0, time.UTC)
@@ -856,28 +858,33 @@ func TestFeedItemPublishedAtFallsBackToTheChannelDate(t *testing.T) {
 		item *gofeed.Item
 		feed *gofeed.Feed
 		want *time.Time
+		// wantOwn is what an update of an already stored row may use: only the
+		// date the item itself carries, never the channel's build time.
+		wantOwn *time.Time
 	}{
 		{
-			name: "item date wins",
-			item: &gofeed.Item{PublishedParsed: &itemDate, UpdatedParsed: &updatedDate},
-			feed: &gofeed.Feed{UpdatedParsed: &buildDate},
-			want: &itemDate,
+			name:    "item date wins",
+			item:    &gofeed.Item{PublishedParsed: &itemDate, UpdatedParsed: &updatedDate},
+			feed:    &gofeed.Feed{UpdatedParsed: &buildDate},
+			want:    &itemDate,
+			wantOwn: &itemDate,
 		},
 		{
-			name: "item updated date is the second choice",
-			item: &gofeed.Item{UpdatedParsed: &updatedDate},
-			feed: &gofeed.Feed{UpdatedParsed: &buildDate},
-			want: &updatedDate,
+			name:    "item updated date is the second choice",
+			item:    &gofeed.Item{UpdatedParsed: &updatedDate},
+			feed:    &gofeed.Feed{UpdatedParsed: &buildDate},
+			want:    &updatedDate,
+			wantOwn: &updatedDate,
 		},
 		{
 			name: "channel lastBuildDate dates an item without its own",
-			item: &gofeed.Item{Title: "国际即时"},
+			item: &gofeed.Item{Title: "知乎日报"},
 			feed: &gofeed.Feed{UpdatedParsed: &buildDate},
 			want: &buildDate,
 		},
 		{
 			name: "undated item leaves the timestamp to the database",
-			item: &gofeed.Item{Title: "国际即时"},
+			item: &gofeed.Item{Title: "知乎日报"},
 			feed: &gofeed.Feed{},
 			want: nil,
 		},
@@ -889,10 +896,18 @@ func TestFeedItemPublishedAtFallsBackToTheChannelDate(t *testing.T) {
 				if got != nil {
 					t.Fatalf("feedItemPublishedAt() = %v, want nil", got)
 				}
+			} else if got == nil || !got.Equal(*test.want) {
+				t.Fatalf("feedItemPublishedAt() = %v, want %v", got, test.want)
+			}
+			gotOwn := feedItemOwnPublishedAt(test.item)
+			if test.wantOwn == nil {
+				if gotOwn != nil {
+					t.Fatalf("feedItemOwnPublishedAt() = %v, want nil so an update keeps the stored date", gotOwn)
+				}
 				return
 			}
-			if got == nil || !got.Equal(*test.want) {
-				t.Fatalf("feedItemPublishedAt() = %v, want %v", got, test.want)
+			if gotOwn == nil || !gotOwn.Equal(*test.wantOwn) {
+				t.Fatalf("feedItemOwnPublishedAt() = %v, want %v", gotOwn, test.wantOwn)
 			}
 		})
 	}
