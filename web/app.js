@@ -742,18 +742,15 @@ function renderTabs() {
     return;
   }
 
-  // While the saved list is on, each day tab counts the saved episodes of that
-  // day, which is what opening it will show.
-  const savedEpisodes = primaryView === LATER_SLOT ? listenLaterEpisodes() : null;
+  // A day tab counts the whole day, never the saved episodes of it: the number
+  // is how the listener reads where the list has something, and the saved view
+  // is a personalisation the dates next to it are not about.
   for (const option of state.dateOptions) {
-    const count = savedEpisodes
-      ? savedEpisodes.filter((episode) => episode.dayKey === option.key).length
-      : countEpisodesForDate(option.key);
     elements.dateTabs.append(
       createTab(
         option.key,
         `${option.relativeLabel} ${option.monthDay}`,
-        count,
+        countEpisodesForDate(option.key),
         state.activeDate === option.key,
         () => selectSlot({ date: option.key }),
       ),
@@ -2527,29 +2524,51 @@ function setStatus(message) {
 
 function selectInitialEpisode() {
   const availableDateKeys = new Set(state.dateOptions.map((option) => option.key));
-  const inWindow = (candidate) => availableDateKeys.has(candidate.dayKey) && isPlayable(candidate);
+  const onScreen = (candidate) => availableDateKeys.has(candidate.dayKey);
+  const inWindow = (candidate) => onScreen(candidate) && isPlayable(candidate);
+  const newestDay = (matches) => state.episodes.find(matches)?.dayKey || "";
+  const today = state.dateOptions[0].key;
+  // The list opens on today whenever today has a row at all, playable or not:
+  // an entry whose audio is still being generated belongs to the day it was
+  // published, and the selected tab has to name the day the rows behind it
+  // belong to. Only a day with no row at all hands the list over, and then it
+  // goes to the nearest day the selected feed has something on before it falls
+  // back to the nearest day any feed has a row on, so the list never opens on a
+  // day that the feed in front cannot fill.
+  const newestRowDay = newestDay(onScreen);
+  const newestFeedDay = newestDay(
+    (candidate) => onScreen(candidate) && inSource(candidate, state.activeSource),
+  );
+  const openingDate = newestRowDay === today ? today : newestFeedDay || newestRowDay;
+  if (!openingDate) {
+    renderAll();
+    return;
+  }
   // The list opens on the selected feed, so the first episode comes from it when
   // it has one. Falling back to every feed keeps the player usable when the
   // default feed has nothing in the window. The saved list is a view of its own,
-  // so the player follows it when the page opened there; one saved today wins,
-  // because that is the day the date layout would open on.
+  // so the player follows it when the page opened there.
   const savedEpisodes = showsListenLater(activeSlot()) ? listenLaterEpisodes() : [];
   // The date layout only shows the saved episodes of the three days on screen,
   // so it picks one of those; the feed layout lists every saved episode at once.
   const savedEpisode =
     (displayMode === "date" ? savedEpisodes.find(inWindow) : savedEpisodes.find(isPlayable)) || null;
+  // Only an episode with audio can fill the player, so the episode the page
+  // starts on can be older than the day it opens: the day follows the rows, the
+  // player follows the audio, and a row that is still waiting for its download
+  // stays on the day it belongs to.
   const latestEpisode =
     savedEpisode ||
     state.episodes.find(
       (candidate) => inWindow(candidate) && inSource(candidate, state.activeSource),
     ) ||
     state.episodes.find(inWindow);
+  state.activeDate = openingDate;
   if (!latestEpisode) {
     renderAll();
     return;
   }
 
-  state.activeDate = latestEpisode.dayKey;
   const resumeEpisode = state.pendingResume?.episodeID
     ? state.episodes.find((candidate) => candidate.id === state.pendingResume.episodeID)
     : null;
