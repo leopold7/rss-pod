@@ -112,12 +112,10 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 逐条生成提交列表（提交信息 + 分支 + 作者 + 日期），
-      # 取代 `--generate-notes` 只给出一条 Full Changelog 链接的结果。
+      # 逐条列出本次 tag 区间内的提交（短 hash + 提交信息），
+      # 末尾附一行 Full Changelog 对比链接。
       - name: Generate release notes
         if: steps.existing.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/generate-release-notes.sh release-notes.md
 
       - name: Show release notes
