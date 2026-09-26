@@ -6,6 +6,7 @@ const THEME_MODES = ["system", "light", "dark"];
 const DISPLAY_KEY = "rss-pod.display-mode";
 const DISPLAY_MODES = ["date", "category"];
 const CATEGORY_ICON_KEY = "rss-pod.category-icon";
+const MENU_COUNT_KEY = "rss-pod.menu-count";
 const DEFAULT_CATEGORY_KEY = "rss-pod.default-category";
 const FIRST_VIEW_KEY = "rss-pod.first-view";
 const PLAYER_DRAWER_KEY = "rss-pod.player-drawer";
@@ -115,6 +116,7 @@ const copy = {
     displaySettingLabel: "Layout",
     displayModes: { date: "By date", category: "By feed" },
     categoryIconSettingLabel: "Show the category icon",
+    menuCountSettingLabel: "Show the article count in the menu",
     categorySettingLabel: "Default category",
     firstViewSettingLabel: "First category shows",
     categoryTabsLabel: "Choose a feed",
@@ -257,6 +259,7 @@ const copy = {
     displaySettingLabel: "显示设置",
     displayModes: { date: "按日期", category: "按分类" },
     categoryIconSettingLabel: "显示分类图标",
+    menuCountSettingLabel: "显示菜单文章数量",
     categorySettingLabel: "默认分类",
     firstViewSettingLabel: "首个分类显示",
     categoryTabsLabel: "选择分类",
@@ -438,6 +441,8 @@ const elements = {
   settingsDisplayLabel: document.querySelector("#settings-display-label"),
   categoryIconLabel: document.querySelector("#settings-category-icon-label"),
   categoryIconToggle: document.querySelector("#settings-category-icon"),
+  menuCountLabel: document.querySelector("#settings-count-label"),
+  menuCountToggle: document.querySelector("#settings-count"),
   settingsCategoryLabel: document.querySelector("#settings-category-label"),
   settingsCategorySelect: document.querySelector("#settings-default-category"),
   settingsFirstViewLabel: document.querySelector("#settings-first-view-label"),
@@ -534,6 +539,9 @@ let displayMode = readDisplayPreference();
 // The button that opens the whole category list is offered unless it has been
 // turned off, so the absence of a stored choice means yes.
 let showCategoryIcon = readStoredString(CATEGORY_ICON_KEY) !== "off";
+// The number beside a date or a feed is shown unless it has been turned off, so
+// the absence of a stored choice means yes.
+let showMenuCount = readStoredString(MENU_COUNT_KEY) !== "off";
 // The feed the list opens on, and what the shared first tab lists. Both are
 // applied to the first payload of the page, so a later poll never pulls a
 // listener back after they swiped elsewhere. The first tab is read first, since
@@ -1110,11 +1118,16 @@ function createTab(key, label, count, selected, onSelect) {
 
   const text = document.createElement("span");
   text.textContent = label;
-  const badge = document.createElement("span");
-  badge.className = "date-count";
-  badge.textContent = String(count);
-  badge.setAttribute("aria-label", copy.episodeCount(count));
-  button.append(text, badge);
+  button.append(text);
+  // The count is the only part of a tab that can be put away; the label alone
+  // still names the day or the feed the tab picks.
+  if (showMenuCount) {
+    const badge = document.createElement("span");
+    badge.className = "date-count";
+    badge.textContent = String(count);
+    badge.setAttribute("aria-label", copy.episodeCount(count));
+    button.append(badge);
+  }
 
   button.addEventListener("click", onSelect);
   return button;
@@ -2750,6 +2763,7 @@ function applyLocale() {
   elements.settingsThemeLabel.textContent = copy.themeSettingLabel;
   elements.settingsDisplayLabel.textContent = copy.displaySettingLabel;
   elements.categoryIconLabel.textContent = copy.categoryIconSettingLabel;
+  elements.menuCountLabel.textContent = copy.menuCountSettingLabel;
   elements.settingsCategoryLabel.textContent = copy.categorySettingLabel;
   elements.settingsFirstViewLabel.textContent = copy.firstViewSettingLabel;
   elements.settingsPersonalLabel.textContent = copy.personalSettingLabel;
@@ -2905,6 +2919,7 @@ function initSettings() {
   elements.categoryIconToggle?.addEventListener("click", () =>
     setShowCategoryIcon(!showCategoryIcon),
   );
+  elements.menuCountToggle?.addEventListener("click", () => setShowMenuCount(!showMenuCount));
   if (elements.settingsCategorySelect) {
     elements.settingsCategorySelect.addEventListener("change", () =>
       setDefaultCategory(elements.settingsCategorySelect.value),
@@ -2952,6 +2967,7 @@ function renderDisplaySettings() {
     button.setAttribute("aria-pressed", String(button.dataset.displayMode === displayMode));
   }
   setSwitchState(elements.categoryIconToggle, showCategoryIcon);
+  setSwitchState(elements.menuCountToggle, showMenuCount);
 }
 
 // The category button can be put away, and it is the only part of the scrolling
@@ -2962,6 +2978,16 @@ function setShowCategoryIcon(enabled) {
   else writeStorage(CATEGORY_ICON_KEY, "off");
   renderDisplaySettings();
   syncCategoryMenu();
+}
+
+// The counts live in the tab row, so putting them away is a redraw of that row
+// alone: the list, the audio and the playing episode are all left as they are.
+function setShowMenuCount(enabled) {
+  showMenuCount = enabled;
+  if (enabled) removeStorage(MENU_COUNT_KEY);
+  else writeStorage(MENU_COUNT_KEY, "off");
+  renderDisplaySettings();
+  renderTabs();
 }
 
 // The default feed is a dropdown rather than a segmented control, because a
