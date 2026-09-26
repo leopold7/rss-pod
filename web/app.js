@@ -617,6 +617,9 @@ document.addEventListener("visibilitychange", () => {
   // It is also a fresh look at the saved list: entering the page is when a
   // copy that was cleared, or one that was never made, is asked for again.
   cacheHeldEpisodes();
+  // And it is the moment a start the browser stopped while the page was away is
+  // asked for again: being seen is the one thing that start was missing.
+  resumePendingPlayback();
 });
 
 // The poll timer is declared before the first load: a load that has no request
@@ -1899,6 +1902,11 @@ async function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
     releaseListenedFromListenLater(previousEpisodeID);
   }
   state.restoringResume = resumeAt > 0;
+  // A selection is the listener moving on: a start a hidden page stopped is not
+  // waited for any more, and the element is handed back with the sound on,
+  // because the copy this selection plays is the one the listener asked for.
+  clearPendingResume();
+  clearBackgroundStart();
   clearMediaSessionPosition();
   elements.audio.defaultPlaybackRate = state.speed;
   if (resumeAt > 0) {
@@ -1953,9 +1961,27 @@ async function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
 async function safePlay(episodeID = state.currentEpisodeID) {
   playingIntent = true;
   playRequestedAt = Date.now();
+  // A start a page nobody can see is not allowed to make sound, so a start made
+  // while the page is hidden asks for a muted one - which is always allowed to
+  // run - and the watch behind it takes the mute off once the audio really
+  // runs. The mark keeps that mute the player's own: a start the page can be
+  // seen for, or one that is refused outright, takes it back at once, so the
+  // element is never left silent without the player knowing why.
+  // Audio that is already running is not a start: it is left alone, and any
+  // mute left over from an earlier one is taken off it instead of being put on.
+  const hiddenStart = document.hidden && elements.audio.paused;
+  if (hiddenStart && !mutedForBackgroundStart) {
+    mutedForBackgroundStart = true;
+    elements.audio.muted = true;
+    logPlayback("info", "background start", audioDiagnostics());
+  } else if (!hiddenStart && mutedForBackgroundStart) {
+    clearBackgroundStart();
+  }
   try {
     await elements.audio.play();
   } catch (error) {
+    // A start that was refused never ran, so it does not keep the mute.
+    if (hiddenStart) clearBackgroundStart();
     if (!isDemoMode()) console.error("play audio", error);
     // A request a newer source interrupted is expected on every retry, so it is
     // recorded but never treated as a failure of its own.
@@ -1971,13 +1997,20 @@ async function safePlay(episodeID = state.currentEpisodeID) {
     // that is refused on top of it is the same failure reported twice, and
     // counting it twice would cost half of the attempts the player has.
     if (episodeID && episodeID === state.currentEpisodeID && !sourceWasRefused()) handlePlaybackFailure();
+    return;
   }
+  // The start is watched from here: muted audio that really runs, and a mute
+  // that comes off without the browser stopping the episode behind it.
+  if (hiddenStart) watchBackgroundStart(episodeID, "muted");
 }
 
 // A listener who asks for audio again gets a full set of attempts back; the
 // retries the player spends on its own belong to one run of one episode.
 async function requestPlayback() {
   playFailures = 0;
+  // A listener who asks again asks for the audio now, so a start that was left
+  // waiting for the page is not waited for any more.
+  clearPendingResume();
   // A listener who asks again also asks the source again: the same question put
   // to the network a moment later can have a different answer.
   probedSourceURL = "";
@@ -2004,8 +2037,11 @@ async function requestPlayback() {
 function pausePlayback() {
   playingIntent = false;
   // A stop the listener asked for also ends the attempt the player had scheduled
-  // for itself.
+  // for itself, and it ends the start a hidden page was waiting to make: coming
+  // back to the page must not play an episode the listener stopped.
   cancelScheduledRetry();
+  clearPendingResume();
+  clearBackgroundStart();
   elements.audio.pause();
 }
 
@@ -2057,6 +2093,21 @@ let retryTimer = 0;
 // back, which would make every retry of a missing object a wasted request.
 const failedSourceURLs = new Set();
 let retryNonce = 0;
+// A start a page nobody can see is not allowed to make sound, and the episode
+// change and every retry are exactly that: a start. A muted start is always
+// allowed to run, so a hidden start asks for one, and the watch behind it takes
+// the mute off as soon as the audio really runs. The mark says the mute is the
+// player's own, so it is always taken back and never outlives its start.
+let mutedForBackgroundStart = false;
+// The window a hidden start is watched in, so a start the browser quietly
+// stopped is caught instead of being left as a dock that claims to play.
+let backgroundStartTimer = 0;
+// The episode a hidden start was stopped on, and where it was stopped. That is
+// not a failure: the source is fine, and the same start is taken the moment the
+// page is back, which is what "the retry only worked once I looked at the
+// phone" means. Nothing is spent on it and nothing is said about it.
+let pendingResumeID = "";
+let pendingResumeAt = 0;
 
 function armStallWatchdog() {
   window.clearTimeout(stallTimer);
@@ -2209,16 +2260,118 @@ function notePlaybackProgress() {
 // started, is what an interrupted play() or a dropped source looks like: the
 // dock reports stopped and the listener is given no reason. It is handled as a
 // failure, because the attempts are what decides between another try and a
-// deliberate stop.
-function recoverUnexpectedPause(episodeID) {
+// deliberate stop. Whether the page could be seen when the element was stopped
+// is what tells the two apart: a page nobody can see is not allowed to start
+// sound on its own, so that pause belongs to the page rather than to the
+// episode and is waited on instead of being spent.
+// The visibility is taken at the pause itself rather than in the window below,
+// because a listener who comes back inside those 1.2 seconds must not turn a
+// start that was only waiting for exactly that into a failure.
+function recoverUnexpectedPause(episodeID, hiddenAtPause = false) {
   window.setTimeout(() => {
     if (episodeID !== state.currentEpisodeID) return;
     if (!playingIntent || !elements.audio.paused) return;
     if (elements.audio.ended || elements.audio.error) return;
     if (Date.now() - playRequestedAt > PAUSE_RECOVERY_WINDOW_MS) return;
+    if (hiddenAtPause) {
+      armPendingResume(episodeID);
+      return;
+    }
     logPlayback("warn", "paused right after a start", audioDiagnostics());
     handlePlaybackFailure();
   }, PAUSE_RECOVERY_MS);
+}
+
+// A start made while the page is hidden is watched in two steps, because the
+// browser answers that start with silence in two ways: it does not really run
+// the muted audio, or it stops the episode the moment the mute comes off. Each
+// step gets the moment a pause after a start gets, and a start that did not
+// become a running one is not a failure - it is a start the page has to be
+// visible for, which is what the wait below writes down.
+function watchBackgroundStart(episodeID, stage) {
+  window.clearTimeout(backgroundStartTimer);
+  backgroundStartTimer = window.setTimeout(() => {
+    backgroundStartTimer = 0;
+    // A newer selection, or a stop the listener asked for, owns the element
+    // now, so this start is not the one being watched any more.
+    if (episodeID !== state.currentEpisodeID || !playingIntent) return;
+    const audio = elements.audio;
+    // A source the element refused is the error handler's business, and an
+    // episode that ended is done with: neither is waiting for the page.
+    if (audio.error || audio.ended) return;
+    if (audio.paused) {
+      armPendingResume(episodeID);
+      return;
+    }
+    if (stage !== "muted") return;
+    // The muted audio really runs, so the browser took this start and only the
+    // sound is left to ask for. The window behind this one says whether the
+    // episode survived the mute coming off.
+    mutedForBackgroundStart = false;
+    elements.audio.muted = false;
+    logPlayback("info", "background start unmuted", audioDiagnostics());
+    watchBackgroundStart(episodeID, "audible");
+  }, PAUSE_RECOVERY_MS);
+}
+
+// The mute a hidden start asked for is the player's own, so it is never left
+// behind: wherever such a start ends, the element is handed back with its sound.
+function clearBackgroundStart() {
+  window.clearTimeout(backgroundStartTimer);
+  backgroundStartTimer = 0;
+  if (!mutedForBackgroundStart) return;
+  mutedForBackgroundStart = false;
+  elements.audio.muted = false;
+}
+
+function clearPendingResume() {
+  pendingResumeID = "";
+  pendingResumeAt = 0;
+}
+
+// A start the browser stopped because the page cannot be seen is not a failure:
+// the source is fine, and the same start is taken the moment the page is back.
+// The episode is written down rather than spent - no attempt, no toast, nothing
+// given up - and it is written down at the position it stopped on, so the wait
+// costs the listener nothing but the time the page was away.
+function armPendingResume(episodeID) {
+  // The pause after a hidden start and the watch behind it both land here, and
+  // one waiting episode is all there is to remember.
+  if (pendingResumeID === episodeID) return;
+  pendingResumeID = episodeID;
+  pendingResumeAt = elements.audio.currentTime || 0;
+  // The log takes the element as this start left it, mute and all: that is the
+  // state the next visit to the log has to explain.
+  logPlayback("warn", "hidden start paused", audioDiagnostics());
+  clearBackgroundStart();
+  clearStallWatchdog();
+  // A page that is already back is the very thing the start was waiting for, so
+  // a listener who came back inside the window is not left with an episode that
+  // stays stopped on a page they are looking at.
+  if (!document.hidden) resumePendingPlayback();
+}
+
+// The page is back, which is the one thing a start made for a page nobody could
+// see was missing. The element is asked to play where it was stopped, and only a
+// source it really refuses is put back together first, because that refusal is
+// the element's own to report - nothing here guesses at it.
+function resumePendingPlayback() {
+  const episodeID = pendingResumeID;
+  if (!episodeID || episodeID !== state.currentEpisodeID || !playingIntent) return;
+  const resumeAt = pendingResumeAt;
+  clearPendingResume();
+  // A start the listener can see does not need the mute, and an element that
+  // refused its source does not play for a play(): the episode is selected over
+  // in that case and continues where it was stopped.
+  clearBackgroundStart();
+  logPlayback("info", "resume on visible", { at: roundSeconds(resumeAt) });
+  if (!elements.audio.error) {
+    safePlay(episodeID);
+    return;
+  }
+  const episode = findEpisode(episodeID);
+  if (!episode) return;
+  selectEpisode(episode, { autoplay: true, resumeAt });
 }
 
 // Giving up is a pause, not a jump: skipping the episode would take it out of
@@ -2292,7 +2445,9 @@ function bindPlayerEvents() {
   elements.audio.addEventListener("pause", () => {
     clearStallWatchdog();
     renderPlaybackState();
-    recoverUnexpectedPause(state.currentEpisodeID);
+    // Whether the page could be seen is read here, while it is still the answer
+    // that belongs to this pause.
+    recoverUnexpectedPause(state.currentEpisodeID, document.hidden);
   });
   elements.audio.addEventListener("waiting", armStallWatchdog);
   // The element says it is producing sound now, which is how far that attempt
@@ -2322,6 +2477,10 @@ function bindPlayerEvents() {
       return;
     }
     playingIntent = false;
+    // Nothing follows this episode, so there is no start left to wait for the
+    // page for, and nothing that may stay muted.
+    clearPendingResume();
+    clearBackgroundStart();
   });
   elements.audio.addEventListener("loadedmetadata", () => {
     // The duration the browser reads back is compared with what the API
@@ -4327,6 +4486,12 @@ function audioDiagnostics() {
     at: roundSeconds(audio.currentTime || 0),
     duration: Number.isFinite(duration) ? roundSeconds(duration) : "",
     buffered: roundSeconds(bufferedEndSeconds(audio)),
+    // A pause the browser decided and a pause the source caused look the same
+    // from the element alone; what the page was doing at the time is what tells
+    // them apart on the next visit to the log, and the mute says whether this
+    // player had asked for a silent start to get that far.
+    visibility: document.hidden ? "hidden" : "visible",
+    muted: audio.muted,
   };
 }
 
