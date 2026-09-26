@@ -195,9 +195,21 @@
                         </button>
                       </div>
                     </div>
-                    <button id="settings-later-clear" class="settings-later-clear" type="button">
-                      Clear all Listen later
-                    </button>
+                    <!-- Two ways out of the saved list sit side by side, so the
+                         narrower one keeps its own place instead of hiding
+                         behind the one that drops everything. -->
+                    <div class="settings-later-actions">
+                      <button
+                        id="settings-later-listened-clear"
+                        class="settings-later-clear"
+                        type="button"
+                      >
+                        Clear listened
+                      </button>
+                      <button id="settings-later-clear" class="settings-later-clear" type="button">
+                        Clear all
+                      </button>
+                    </div>
                   </div>
                   <!-- The remaining choices form a second group, with the cache
                        the last switch can build up inside it too. -->

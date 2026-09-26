@@ -173,11 +173,18 @@ const copy = {
       `This removes ${count} locally cached ${count === 1 ? "episode" : "episodes"} from this device. They download again when played.`,
     addListenLater: "Save for later",
     removeListenLater: "Remove from Listen later",
+    clearListenedLater: "Clear listened Listen later",
+    clearListenedLaterAction: "Clear listened",
     clearAllLater: "Clear all Listen later",
+    clearAllLaterAction: "Clear all",
     laterAdded: "Saved for later",
     laterCleared: "Listen later cleared",
+    laterListenedCleared: "Listened episodes cleared",
+    emptyListenedLater: "Nothing listened in Listen later yet",
     laterClearConfirmMessage: (count) =>
       `This removes ${count} saved ${count === 1 ? "episode" : "episodes"} from this device, and cannot be undone.`,
+    laterListenedClearConfirmMessage: (count) =>
+      `This removes ${count} listened ${count === 1 ? "episode" : "episodes"} from the saved list, and cannot be undone.`,
     confirmCancel: "Cancel",
     confirmClear: "Clear",
     laterUnavailable: "This one cannot be started here",
@@ -288,11 +295,18 @@ const copy = {
     cacheClearConfirmMessage: (count) => `将从本机移除全部 ${count} 条已缓存的内容，播放时会重新下载。`,
     addListenLater: "稍后在听",
     removeListenLater: "取消稍后在听",
+    clearListenedLater: "清空已读稍后在听",
+    clearListenedLaterAction: "清空已读",
     clearAllLater: "清空全部稍后在听",
+    clearAllLaterAction: "清空全部",
     laterAdded: "已加入稍后在听",
     laterCleared: "已清空稍后在听",
+    laterListenedCleared: "已清空已读稍后在听",
+    emptyListenedLater: "还没有已读的稍后在听内容",
     laterClearConfirmMessage: (count) =>
       `将从本机移除全部 ${count} 条稍后在听的内容，且无法恢复。`,
+    laterListenedClearConfirmMessage: (count) =>
+      `将从本机移除全部 ${count} 条已读的稍后在听内容，且无法恢复。`,
     confirmCancel: "取消",
     confirmClear: "清空",
     laterUnavailable: "该条目无法在这里开始下载",
@@ -392,6 +406,7 @@ const elements = {
   laterCacheToggle: document.querySelector("#settings-later-cache"),
   cacheSummary: document.querySelector("#settings-cache-summary"),
   cacheClear: document.querySelector("#settings-cache-clear"),
+  laterListenedClear: document.querySelector("#settings-later-listened-clear"),
   laterClear: document.querySelector("#settings-later-clear"),
   settingsDiagnosticsLabel: document.querySelector("#settings-diagnostics-label"),
   settingsLogOpen: document.querySelector("#settings-log-open"),
@@ -2457,7 +2472,8 @@ function applyLocale() {
   elements.preloadNextLabel.textContent = copy.preloadNextLabel;
   elements.laterCacheLabel.textContent = copy.laterCacheLabel;
   elements.cacheClear.textContent = copy.clearCache;
-  elements.laterClear.textContent = copy.clearAllLater;
+  elements.laterListenedClear.textContent = copy.clearListenedLaterAction;
+  elements.laterClear.textContent = copy.clearAllLaterAction;
   elements.settingsDiagnosticsLabel.textContent = copy.playbackLogLabel;
   elements.settingsLogOpen.textContent = copy.playbackLogAction;
   elements.logTitle.textContent = copy.playbackLogTitle;
@@ -3089,6 +3105,37 @@ function toggleListenLater(episode) {
   startLaterDownload(episode);
 }
 
+// The episodes behind the listener can leave the saved list on their own, so a
+// long list does not have to be dropped whole to get rid of what was heard.
+function listenedLaterRecords() {
+  return listenLater.filter((record) => isListened(record.id));
+}
+
+// This is the narrower of the two ways out: what has been listened to goes,
+// what is still waiting stays, and so does the mark that greys the row out.
+function clearListenedLater() {
+  listenLater = listenLater.filter((record) => !isListened(record.id));
+  writeListenLaterRecords(listenLater);
+  renderAll();
+  showToast(copy.laterListenedCleared);
+}
+
+// The same question is asked before anything leaves, and a list holding nothing
+// listened to says so instead of opening a window over nothing.
+function confirmClearListenedLater() {
+  const count = listenedLaterRecords().length;
+  if (count === 0) {
+    showToast(copy.emptyListenedLater);
+    return;
+  }
+  openConfirmDialog({
+    title: copy.clearListenedLater,
+    message: copy.laterListenedClearConfirmMessage(count),
+    acceptLabel: copy.confirmClear,
+    onAccept: clearListenedLater,
+  });
+}
+
 // Clearing the list takes every saved record at once. An episode that is playing
 // keeps playing; it only stops being one of the saved ones.
 function clearListenLater() {
@@ -3421,8 +3468,14 @@ function episodeMenuItems(episode) {
     onSelect: () => toggleListenLater(findEpisode(id) || episode),
   });
   // A row of the saved page speaks for the whole list as well, which is the one
-  // place where clearing it belongs.
+  // place where clearing it belongs. The narrower clear sits first, so the one
+  // that keeps what is still waiting is the closer reach of the two.
   if (showsListenLater(activeSlot())) {
+    items.push({
+      label: copy.clearListenedLater,
+      icon: ICON_TRASH,
+      onSelect: () => confirmClearListenedLater(),
+    });
     items.push({
       label: copy.clearAllLater,
       icon: ICON_TRASH,
@@ -3808,6 +3861,7 @@ function initPersonalSettings() {
     setPersonalFlag("laterAutoCache", !laterAutoCache),
   );
   elements.cacheClear?.addEventListener("click", () => confirmClearAudioCache());
+  elements.laterListenedClear?.addEventListener("click", () => confirmClearListenedLater());
   elements.laterClear?.addEventListener("click", () => confirmClearListenLater());
   renderPersonalSettings();
 }

@@ -598,6 +598,18 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+/* The saved list offers both ways out at once, and they split the row evenly
+   so neither one reads as the only choice. */
+.settings-later-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-later-actions .settings-later-clear {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 /* The settings panel only takes over the two header controls that do not fit a
    phone header, so wide screens keep the layout they had. */
 .settings-mobile-only {
