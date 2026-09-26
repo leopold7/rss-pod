@@ -11,6 +11,9 @@ const FIRST_VIEW_KEY = "rss-pod.first-view";
 const PLAYER_DRAWER_KEY = "rss-pod.player-drawer";
 const PLAYER_DRAWER_MODES = ["expanded", "collapsed"];
 const LISTEN_LATER_KEY = "rss-pod.listen-later";
+// Bookmarks are the second list kept in this browser. They are held to the end:
+// their copies are cached and no cache sweep takes them away.
+const BOOKMARK_KEY = "rss-pod.bookmark";
 const LISTENED_KEY = "rss-pod.listened";
 const LATER_AUTO_REMOVE_KEY = "rss-pod.personal-later-auto-remove";
 const LATER_AUTO_DOWNLOAD_KEY = "rss-pod.personal-later-auto-download";
@@ -34,8 +37,11 @@ const MEDIA_ARTWORK = [
   { src: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
 ];
 const DEFAULT_SEEK_OFFSET = 10;
-// The list keeps a slot of its own for the episodes saved in this browser.
+// The list keeps a slot of its own for the episodes saved in this browser, and
+// a second one for the episodes bookmarked in it. The first tab carries either
+// of them in place of "All".
 const LATER_SLOT = "later";
+const BOOKMARK_SLOT = "bookmark";
 // A long press has to be deliberate, and a finger that moves is scrolling or
 // paging rather than asking for the row actions.
 const LONG_PRESS_MS = 500;
@@ -43,6 +49,7 @@ const LONG_PRESS_SLOP = 8;
 const LONG_PRESS_CLICK_GUARD_MS = 700;
 const LISTENED_LIMIT = 500;
 const LISTEN_LATER_LIMIT = 200;
+const BOOKMARK_LIMIT = 200;
 // Only the episode that is playing and the one after it are worth holding
 // locally, so a handful of entries covers a queue and its lookahead.
 const AUDIO_CACHE_LIMIT = 5;
@@ -79,6 +86,10 @@ const ICON_TRASH =
   "M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm80-120h80v-400h-80v400Zm160 0h80v-400h-80v400Z";
 const ICON_CHEVRON_DOWN =
   "M469-358q-5-2-10-7L261-563q-9-9-8.5-21.5T262-606q9-9 21.5-9t21.5 9l175 176 176-176q9-9 21-8.5t21 9.5q9 9 9 21.5t-9 21.5L501-365q-5 5-10 7t-11 2q-6 0-11-2Z";
+const ICON_STAR =
+  "m354-287 126-76 126 77-33-144 111-96-146-13-58-136-58 135-145 13 111 97-34 143Zm-52 167q-11 3-18.5-4t-4.5-18l38-165-128-111q-9-8-5.5-17.5T199-437l169-15 66-155q4-11 15-11t15 11l66 155 169 15q11 1 14.5 10.5T708-409L580-298l39 165q2 11-4.5 18t-17.5 4l-146-88-146 88Zm178-215Z";
+const ICON_OPEN_IN_NEW =
+  "M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z";
 
 const isAdminPage = /^\/admin(?:\/|$)/.test(window.location.pathname);
 let adminCSRF = "";
@@ -153,7 +164,7 @@ const copy = {
     generatingUnavailable: "The download could not be started. Please try again later.",
     generatingAlreadyRunning: "This episode is already downloading.",
     listenLater: "Listen later",
-    listenLaterDropdown: "Choose all episodes or Listen later",
+    sharedDropdown: "Choose all episodes, Listen later or Bookmarks",
     emptyLater: "Nothing saved for later yet",
     personalSettingLabel: "Personalization",
     laterGroupLabel: "Listen later",
@@ -185,6 +196,25 @@ const copy = {
       `This removes ${count} saved ${count === 1 ? "episode" : "episodes"} from this device, and cannot be undone.`,
     laterListenedClearConfirmMessage: (count) =>
       `This removes ${count} listened ${count === 1 ? "episode" : "episodes"} from the saved list, and cannot be undone.`,
+    // Bookmarks are the second list the player keeps in this browser. They are
+    // held to the end, so their wording never promises a removal by cache.
+    bookmark: "Bookmarks",
+    bookmarkTitle: "Bookmarks",
+    bookmarkGroupLabel: "Bookmarks",
+    viewBookmarks: "View bookmarks",
+    emptyBookmarks: "Nothing bookmarked yet",
+    addBookmark: "Bookmark",
+    removeBookmark: "Remove bookmark",
+    bookmarkAdded: "Bookmarked",
+    bookmarkRemoved: "Bookmark removed",
+    bookmarkMark: "Bookmarked",
+    clearBookmarks: "Clear bookmarks",
+    clearAllBookmarks: "Clear all bookmarks",
+    bookmarkClearConfirmMessage: (count) =>
+      `This removes ${count} bookmarked ${count === 1 ? "episode" : "episodes"} from this device, and cannot be undone.`,
+    bookmarksCleared: "Bookmarks cleared",
+    viewOriginal: "View original",
+    closeLabel: "Close",
     confirmCancel: "Cancel",
     confirmClear: "Clear",
     laterUnavailable: "This one cannot be started here",
@@ -276,7 +306,7 @@ const copy = {
     generatingUnavailable: "无法开始下载，请稍后重试",
     generatingAlreadyRunning: "该条目正在下载中",
     listenLater: "稍后在听",
-    listenLaterDropdown: "在全部与稍后在听之间切换",
+    sharedDropdown: "在全部、稍后在听与收藏之间切换",
     emptyLater: "还没有稍后在听的内容",
     personalSettingLabel: "个性化设置",
     laterGroupLabel: "稍后在听",
@@ -307,6 +337,22 @@ const copy = {
       `将从本机移除全部 ${count} 条稍后在听的内容，且无法恢复。`,
     laterListenedClearConfirmMessage: (count) =>
       `将从本机移除全部 ${count} 条已读的稍后在听内容，且无法恢复。`,
+    bookmark: "收藏",
+    bookmarkTitle: "收藏",
+    bookmarkGroupLabel: "收藏",
+    viewBookmarks: "查看收藏",
+    emptyBookmarks: "还没有收藏的内容",
+    addBookmark: "收藏",
+    removeBookmark: "取消收藏",
+    bookmarkAdded: "已收藏",
+    bookmarkRemoved: "已取消收藏",
+    bookmarkMark: "已收藏",
+    clearBookmarks: "清空收藏",
+    clearAllBookmarks: "清空全部收藏",
+    bookmarkClearConfirmMessage: (count) => `将从本机移除全部 ${count} 条收藏的内容，且无法恢复。`,
+    bookmarksCleared: "已清空收藏",
+    viewOriginal: "查看原文",
+    closeLabel: "关闭",
     confirmCancel: "取消",
     confirmClear: "清空",
     laterUnavailable: "该条目无法在这里开始下载",
@@ -393,6 +439,7 @@ const elements = {
   settingsFirstViewSelect: document.querySelector("#settings-first-view"),
   settingsPersonalLabel: document.querySelector("#settings-personal-label"),
   laterGroupLabel: document.querySelector("#settings-later-group-label"),
+  bookmarkGroupLabel: document.querySelector("#settings-bookmark-group-label"),
   otherGroupLabel: document.querySelector("#settings-other-group-label"),
   laterAutoLabel: document.querySelector("#settings-later-auto-label"),
   laterAutoToggle: document.querySelector("#settings-later-auto"),
@@ -408,6 +455,8 @@ const elements = {
   cacheClear: document.querySelector("#settings-cache-clear"),
   laterListenedClear: document.querySelector("#settings-later-listened-clear"),
   laterClear: document.querySelector("#settings-later-clear"),
+  bookmarkView: document.querySelector("#settings-bookmark-view"),
+  bookmarkClear: document.querySelector("#settings-bookmark-clear"),
   settingsDiagnosticsLabel: document.querySelector("#settings-diagnostics-label"),
   settingsLogOpen: document.querySelector("#settings-log-open"),
   settingsLogSummary: document.querySelector("#settings-log-summary"),
@@ -417,6 +466,12 @@ const elements = {
   confirmMessage: document.querySelector("#confirm-message"),
   confirmCancel: document.querySelector("#confirm-cancel"),
   confirmAccept: document.querySelector("#confirm-accept"),
+  bookmarkDialog: document.querySelector("#bookmark-dialog"),
+  bookmarkTitle: document.querySelector("#bookmark-title"),
+  bookmarkSummary: document.querySelector("#bookmark-summary"),
+  bookmarkEmpty: document.querySelector("#bookmark-empty"),
+  bookmarkEntries: document.querySelector("#bookmark-entries"),
+  bookmarkClose: document.querySelector("#bookmark-close"),
   logTitle: document.querySelector("#log-title"),
   logSummary: document.querySelector("#log-summary"),
   logFilters: document.querySelector("#log-filters"),
@@ -486,6 +541,7 @@ let playerDrawer = readPlayerDrawerPreference();
 // The episodes saved for later and the ones already played through live in this
 // browser, like the preferences above, so they survive a reload on their own.
 let listenLater = readListenLaterRecords();
+let bookmarks = readBookmarkRecords();
 let listened = readListenedRecords();
 let laterAutoRemove = readFlag(LATER_AUTO_REMOVE_KEY);
 let laterAutoDownload = readFlag(LATER_AUTO_DOWNLOAD_KEY);
@@ -493,8 +549,9 @@ let dimListened = readFlag(DIM_LISTENED_KEY);
 let preloadNext = readFlag(PRELOAD_NEXT_KEY);
 let laterAutoCache = readFlag(LATER_AUTO_CACHE_KEY);
 // The first tab of the feed row is shared: it lists every feed until the
-// caret switches it to the episodes saved on this device. The slot keeps its
-// identity, so switching views never rebuilds the pages behind the swipe.
+// caret switches it to the episodes saved or bookmarked on this device. The
+// slot keeps its identity, so switching views never rebuilds the pages behind
+// the swipe.
 let primaryView = "all";
 // The local audio cache is a manifest plus the object URLs that point at the
 // blobs it holds; the object URLs only make sense in this page.
@@ -523,6 +580,7 @@ initTheme();
 initSettings();
 initPlayerDrawer();
 initConfirmDialog();
+initBookmarkDialog();
 
 const dateOptions = createDateOptions();
 const state = {
@@ -558,7 +616,7 @@ document.addEventListener("visibilitychange", () => {
   if (state.episodes.some((episode) => episode.state === "processing")) refreshEpisodes();
   // It is also a fresh look at the saved list: entering the page is when a
   // copy that was cleared, or one that was never made, is asked for again.
-  cacheListenLaterEpisodes();
+  cacheHeldEpisodes();
 });
 
 // The poll timer is declared before the first load: a load that has no request
@@ -666,7 +724,7 @@ async function loadPlayer() {
     applyPayload(payload);
     // The saved list is checked once the page has its episodes, which is where
     // an episode that was cleared from this device is fetched again.
-    cacheListenLaterEpisodes();
+    cacheHeldEpisodes();
     selectInitialEpisode();
     scheduleRefresh();
   } catch (error) {
@@ -688,7 +746,7 @@ function applyPayload(payload) {
   applyInitialView();
   renderCategorySetting();
   renderFirstViewSetting();
-  syncListenLaterSnapshots();
+  syncHeldSnapshots();
 }
 
 // The opening view only applies to the first payload of the page: a poll that
@@ -757,7 +815,7 @@ function applyEpisodeProgress(ids, episodes) {
     // A row that just arrived keeps the place its own timestamp gives it, the
     // same way reading the window again would place it.
     .sort((a, b) => b.sortTime - a.sortTime);
-  syncListenLaterSnapshots();
+  syncHeldSnapshots();
 }
 
 async function fetchEpisodeProgress(ids) {
@@ -829,6 +887,9 @@ function renderAll() {
   renderSourceFilters();
   renderEpisodeList();
   renderDisplaySettings();
+  // The bookmark window shows the same rows as the page, so it follows every
+  // redraw. It writes nothing while it is closed.
+  renderBookmarks();
 }
 
 // The header row follows the display mode: dates pick a day, categories pick a
@@ -848,7 +909,7 @@ function renderTabs() {
       const tab = createTab(
         choice.id,
         choice.name,
-        shared && primaryView === LATER_SLOT ? listenLaterCount() : countEpisodesForSource(choice.id),
+        shared ? countForPrimaryView(choice.id) : countEpisodesForSource(choice.id),
         state.activeSource === choice.id,
         () => selectSlot({ source: choice.id }),
       );
@@ -945,7 +1006,7 @@ function syncCategoryFade() {
 function openCategoryMenu() {
   const toggle = elements.categoryMenuToggle;
   if (!toggle) return;
-  const byLater = primaryView === LATER_SLOT;
+  const byView = primaryView;
   const onFirstTab = state.activeSource === "all";
   openPopupMenu({
     anchor: toggle,
@@ -954,14 +1015,20 @@ function openCategoryMenu() {
       {
         label: copy.allSources,
         count: menuCount("all"),
-        checked: !byLater && onFirstTab,
+        checked: byView === "all" && onFirstTab,
         onSelect: () => selectPrimarySource("all"),
       },
       {
         label: copy.listenLater,
         count: menuCount(LATER_SLOT),
-        checked: byLater && onFirstTab,
+        checked: byView === LATER_SLOT && onFirstTab,
         onSelect: () => selectPrimarySource(LATER_SLOT),
+      },
+      {
+        label: copy.bookmark,
+        count: menuCount(BOOKMARK_SLOT),
+        checked: byView === BOOKMARK_SLOT && onFirstTab,
+        onSelect: () => selectPrimarySource(BOOKMARK_SLOT),
       },
       ...state.sources.map((source) => ({
         label: source.name,
@@ -978,6 +1045,9 @@ function openCategoryMenu() {
 // the day in front while it is grouped by date. That is the number the same
 // choice carries in the tab row, so the menu and the row agree.
 function menuCount(sourceID) {
+  // The bookmark page is a local list and never splits by day, so its count is
+  // the whole list whichever layout is on screen.
+  if (sourceID === BOOKMARK_SLOT) return bookmarkEpisodes().length;
   const episodes = sourceID === LATER_SLOT ? listenLaterEpisodes() : state.episodes;
   const day = displayMode === "date" ? state.activeDate : "";
   return episodes.filter(
@@ -992,8 +1062,8 @@ function menuCount(sourceID) {
 // as the listener set it: walking the feeds is not a way of putting the whole
 // list back in its place.
 function selectPrimarySource(sourceID) {
-  if (sourceID === LATER_SLOT) {
-    setPrimaryView(LATER_SLOT);
+  if (sourceID === LATER_SLOT || sourceID === BOOKMARK_SLOT) {
+    setPrimaryView(sourceID);
     selectSlot({ source: "all" });
     return;
   }
@@ -1104,8 +1174,8 @@ function createTabDropdown() {
   button.dataset.tabDropdown = "all";
   button.setAttribute("aria-haspopup", "menu");
   button.setAttribute("aria-expanded", "false");
-  button.setAttribute("aria-label", copy.listenLaterDropdown);
-  button.title = copy.listenLaterDropdown;
+  button.setAttribute("aria-label", copy.sharedDropdown);
+  button.title = copy.sharedDropdown;
   button.append(createIcon(ICON_CHEVRON_DOWN, "date-tab-caret-icon"));
   return button;
 }
@@ -1117,11 +1187,11 @@ function toggleAllDropdown(anchor) {
   }
   openPopupMenu({
     anchor,
-    label: copy.listenLaterDropdown,
+    label: copy.sharedDropdown,
     items: [
       {
         label: copy.allSources,
-        checked: primaryView !== LATER_SLOT,
+        checked: primaryView === "all",
         onSelect: () => setPrimaryView("all"),
       },
       {
@@ -1129,33 +1199,57 @@ function toggleAllDropdown(anchor) {
         checked: primaryView === LATER_SLOT,
         onSelect: () => setPrimaryView(LATER_SLOT),
       },
+      {
+        label: copy.bookmark,
+        checked: primaryView === BOOKMARK_SLOT,
+        onSelect: () => setPrimaryView(BOOKMARK_SLOT),
+      },
     ],
   });
 }
 
-// The shared tab swaps what it lists: every feed, or the episodes saved on this
-// device. The pages behind the swipe are rebuilt in place, so the tab the
-// listener is on stays where it is.
+// What the shared first tab carries is a three-way choice; anything else the
+// storage of an older visit may hold falls back to the whole list.
+function normalizePrimaryView(view) {
+  return view === LATER_SLOT || view === BOOKMARK_SLOT ? view : "all";
+}
+
+// The shared tab swaps what it lists: every feed, the episodes saved on this
+// device, or the ones bookmarked in it. The pages behind the swipe are rebuilt
+// in place, so the tab the listener is on stays where it is.
 function setPrimaryView(view) {
-  const next = view === LATER_SLOT ? LATER_SLOT : "all";
+  const next = normalizePrimaryView(view);
   if (next === primaryView) return;
   primaryView = next;
   renderAll();
 }
 
 // The feed row always offers "all" first, which is also where a swipe into a
-// new date row starts over. The saved-for-later slot only joins the row when
-// the list is grouped by feed, because it belongs to no single day.
+// new date row starts over. The saved and the bookmarked slots only join the row
+// when the list is grouped by feed, because they belong to no single day.
 function sourceChoices() {
   return [{ id: "all", name: copy.allSources }, ...state.sources];
 }
 
+// The name the shared control carries: it stands for the whole list until the
+// caret, the row menu or the first-view setting sends it to a stored list.
+function sharedSlotLabel() {
+  if (primaryView === LATER_SLOT) return copy.listenLater;
+  if (primaryView === BOOKMARK_SLOT) return copy.bookmark;
+  return copy.allSources;
+}
+
 // The row opens with one shared tab and then one tab per feed.
 function categoryChoices() {
-  return [
-    { id: "all", name: primaryView === LATER_SLOT ? copy.listenLater : copy.allSources },
-    ...state.sources,
-  ];
+  return [{ id: "all", name: sharedSlotLabel() }, ...state.sources];
+}
+
+// The number the shared tab carries. A stored list counts itself; the whole
+// list counts the feed it stands for.
+function countForPrimaryView(sourceID) {
+  if (primaryView === LATER_SLOT) return listenLaterEpisodes().length;
+  if (primaryView === BOOKMARK_SLOT) return bookmarkEpisodes().length;
+  return countEpisodesForSource(sourceID);
 }
 
 // The shared "all" control lists the saved episodes while the personalisation
@@ -1165,8 +1259,18 @@ function showsListenLater(slot) {
   return primaryView === LATER_SLOT && slot?.source === "all";
 }
 
-function listenLaterCount() {
-  return listenLaterEpisodes().length;
+// The same control carries the bookmarks while that view is on. Its page is the
+// one list that never splits by day.
+function showsBookmarks(slot) {
+  return primaryView === BOOKMARK_SLOT && slot?.source === "all";
+}
+
+// Either stored list is on screen, or a row of the bookmark window, which is a
+// stored list drawn outside the page. Both mix feeds and days, so the rows they
+// draw name the feed an episode came from rather than the day it was published,
+// and the player follows the list rather than the window.
+function showsStoredList(slot) {
+  return showsListenLater(slot) || showsBookmarks(slot) || slot?.source === BOOKMARK_SLOT;
 }
 
 function renderSourceFilters() {
@@ -1175,13 +1279,12 @@ function renderSourceFilters() {
   elements.sourceFilterSection.hidden = displayMode === "category";
   elements.sourceFilters.replaceChildren();
   const sources = sourceChoices();
-  const laterView = primaryView === LATER_SLOT;
   for (const source of sources) {
     const shared = source.id === "all";
     const button = document.createElement("button");
     button.className = "source-filter";
     button.type = "button";
-    button.textContent = shared && laterView ? copy.listenLater : source.name;
+    button.textContent = shared ? sharedSlotLabel() : source.name;
     button.dataset.source = source.id;
     button.setAttribute("aria-pressed", String(state.activeSource === source.id));
     button.addEventListener("click", () => selectSlot({ source: source.id }));
@@ -1227,6 +1330,7 @@ function slotKey(slot) {
 // needs to hear rather than the number of the page.
 function slotLabel(slot) {
   if (showsListenLater(slot)) return copy.listenLater;
+  if (showsBookmarks(slot)) return copy.bookmark;
   const option = state.dateOptions.find((candidate) => candidate.key === slot.date);
   const feedName = sourceName(slot.source);
   return option ? `${option.relativeLabel} ${option.monthDay} · ${feedName}` : feedName;
@@ -1237,6 +1341,10 @@ function slotLabel(slot) {
 // on the selected day. The saved-for-later slot ignores both and shows what this
 // browser holds, newest save first.
 function slotEpisodes(slot) {
+  // The bookmark page is a list held in this browser rather than a slice of the
+  // window, so it is never narrowed to the day in front: a day tab stays a day
+  // tab for everything else, and the bookmarks are simply all there.
+  if (showsBookmarks(slot)) return bookmarkEpisodes();
   if (showsListenLater(slot)) {
     const saved = listenLaterEpisodes();
     // The date layout splits the saved list the way it splits everything else:
@@ -1498,6 +1606,13 @@ function createEpisodeRow(episode, slot = null) {
   cached.setAttribute("aria-label", copy.cachedLocally);
   cached.title = copy.cachedLocally;
 
+  // The star of a bookmarked episode is built the same way and sits beside it.
+  const bookmarked = row.querySelector(".episode-bookmark");
+  bookmarked.append(createIcon(ICON_STAR, "episode-bookmark-icon"));
+  bookmarked.setAttribute("role", "img");
+  bookmarked.setAttribute("aria-label", copy.bookmarkMark);
+  bookmarked.title = copy.bookmarkMark;
+
   updateEpisodeRow(row, episode, slot);
   return row;
 }
@@ -1528,9 +1643,9 @@ function updateEpisodeRow(row, episode, slot = null) {
   if (playIcon.getAttribute("src") !== icon) playIcon.src = icon;
 
   // In category mode every row repeats the same feed, so that column carries
-  // the publish date instead of the feed name; the saved-for-later page mixes
+  // the publish date instead of the feed name; a page of stored entries mixes
   // feeds and keeps the names instead.
-  const byDate = displayMode === "category" && !showsListenLater(slot);
+  const byDate = displayMode === "category" && !showsStoredList(slot);
   const source = row.querySelector(".episode-source");
   source.classList.toggle("is-date", byDate);
   const sourceLabel = byDate ? episodeDateLabel(episode) : sourceName(episode.sourceID);
@@ -1547,6 +1662,11 @@ function updateEpisodeRow(row, episode, slot = null) {
   // one that names the episode's feed or its date.
   const cached = row.querySelector(".episode-cached");
   cached.hidden = !isEpisodeCached(episode);
+
+  // A bookmark is marked beside it, so an episode that is both held and
+  // bookmarked shows the two marks together.
+  const bookmarked = row.querySelector(".episode-bookmark");
+  if (bookmarked) bookmarked.hidden = !inBookmarks(episode.id);
 
   // The heading can also hold the admin badge, so the title is written into a
   // text node of its own rather than replacing everything the heading holds.
@@ -2314,6 +2434,9 @@ function normalizeEpisode(episode) {
     sourceID: String(episode.source_id || ""),
     title: String(episode.title || copy.untitled),
     audioURL,
+    // A feed item that published no link sends none, and the row then offers
+    // nothing to open rather than an empty window.
+    originalURL: String(episode.original_url || ""),
     // The demo page and older responses only describe playable episodes.
     state: EPISODE_STATES.includes(reportedState) ? reportedState : audioURL ? "ready" : "pending",
     stage: String(episode.stage || ""),
@@ -2401,13 +2524,15 @@ function isPlayable(episode) {
 // The queue the transport walks is wider than the page: the list renders one
 // day or one feed at a time, but an episode that ends has to keep the player
 // going through the rest of the window instead of stopping at the end of a page
-// the listener cannot even swipe past with the screen off. The saved list is a
+// the listener cannot even swipe past with the screen off. A stored list is a
 // queue of its own while it is on screen, because an episode saved days ago is
 // older than anything the API still returns.
 function playbackQueue() {
   const saved = listenLaterEpisodes().filter(isPlayable);
+  const bookmarked = bookmarkEpisodes().filter(isPlayable);
   const inWindow = state.episodes.filter(isPlayable);
   const holds = (queue) => queue.some((episode) => episode.id === state.currentEpisodeID);
+  if (showsBookmarks(activeSlot())) return holds(bookmarked) ? bookmarked : inWindow;
   if (showsListenLater(activeSlot())) return holds(saved) ? saved : inWindow;
   return holds(inWindow) ? inWindow : saved;
 }
@@ -2465,6 +2590,7 @@ function applyLocale() {
   elements.settingsFirstViewLabel.textContent = copy.firstViewSettingLabel;
   elements.settingsPersonalLabel.textContent = copy.personalSettingLabel;
   elements.laterGroupLabel.textContent = copy.laterGroupLabel;
+  elements.bookmarkGroupLabel.textContent = copy.bookmarkGroupLabel;
   elements.otherGroupLabel.textContent = copy.otherGroupLabel;
   elements.laterAutoLabel.textContent = copy.laterAutoRemoveLabel;
   elements.laterDownloadLabel.textContent = copy.laterDownloadLabel;
@@ -2474,6 +2600,10 @@ function applyLocale() {
   elements.cacheClear.textContent = copy.clearCache;
   elements.laterListenedClear.textContent = copy.clearListenedLaterAction;
   elements.laterClear.textContent = copy.clearAllLaterAction;
+  elements.bookmarkView.textContent = copy.viewBookmarks;
+  elements.bookmarkClear.textContent = copy.clearBookmarks;
+  elements.bookmarkTitle.textContent = copy.bookmarkTitle;
+  elements.bookmarkClose.textContent = copy.closeLabel;
   elements.settingsDiagnosticsLabel.textContent = copy.playbackLogLabel;
   elements.settingsLogOpen.textContent = copy.playbackLogAction;
   elements.logTitle.textContent = copy.playbackLogTitle;
@@ -2549,7 +2679,7 @@ function readFirstViewPreference() {
     removeStorage(DEFAULT_CATEGORY_KEY);
     writeStorage(FIRST_VIEW_KEY, LATER_SLOT);
   }
-  return readStoredString(FIRST_VIEW_KEY) === LATER_SLOT ? LATER_SLOT : "all";
+  return normalizePrimaryView(readStoredString(FIRST_VIEW_KEY));
 }
 
 function readPlayerDrawerPreference() {
@@ -2677,12 +2807,14 @@ function defaultCategoryChoices() {
   return [{ id: "all", name: copy.allSources }, ...state.sources];
 }
 
-// The shared first tab lists every feed or the episodes saved on this device,
-// which is a choice of its own rather than a feed to open on.
+// The shared first tab lists every feed, the episodes saved on this device or
+// the ones bookmarked in it, which is a choice of its own rather than a feed to
+// open on.
 function firstViewChoices() {
   return [
     { id: "all", name: copy.allSources },
     { id: LATER_SLOT, name: copy.listenLater },
+    { id: BOOKMARK_SLOT, name: copy.bookmark },
   ];
 }
 
@@ -2729,7 +2861,7 @@ function setDefaultCategory(sourceID) {
 // The first tab works in either layout, so switching what it lists previews the
 // choice right away without touching the slot the listener is on.
 function setFirstView(view) {
-  firstView = view === LATER_SLOT ? LATER_SLOT : "all";
+  firstView = normalizePrimaryView(view);
   if (firstView === "all") removeStorage(FIRST_VIEW_KEY);
   else writeStorage(FIRST_VIEW_KEY, firstView);
   renderFirstViewSetting();
@@ -2870,19 +3002,27 @@ function selectInitialEpisode() {
   }
   // The list opens on the selected feed, so the first episode comes from it when
   // it has one. Falling back to every feed keeps the player usable when the
-  // default feed has nothing in the window. The saved list is a view of its own,
+  // default feed has nothing in the window. A stored list is a view of its own,
   // so the player follows it when the page opened there.
-  const savedEpisodes = showsListenLater(activeSlot()) ? listenLaterEpisodes() : [];
+  const byBookmark = showsBookmarks(activeSlot());
+  const storedEpisodes = byBookmark
+    ? bookmarkEpisodes()
+    : showsListenLater(activeSlot())
+      ? listenLaterEpisodes()
+      : [];
   // The date layout only shows the saved episodes of the three days on screen,
-  // so it picks one of those; the feed layout lists every saved episode at once.
-  const savedEpisode =
-    (displayMode === "date" ? savedEpisodes.find(inWindow) : savedEpisodes.find(isPlayable)) || null;
+  // so it picks one of those; the feed layout lists every saved episode at once,
+  // and the bookmark page never splits by day at all.
+  const storedEpisode =
+    (displayMode === "date" && !byBookmark
+      ? storedEpisodes.find(inWindow)
+      : storedEpisodes.find(isPlayable)) || null;
   // Only an episode with audio can fill the player, so the episode the page
   // starts on can be older than the day it opens: the day follows the rows, the
   // player follows the audio, and a row that is still waiting for its download
   // stays on the day it belongs to.
   const latestEpisode =
-    savedEpisode ||
+    storedEpisode ||
     state.episodes.find(
       (candidate) => inWindow(candidate) && inSource(candidate, state.activeSource),
     ) ||
@@ -2994,6 +3134,9 @@ function snapshotFromEpisode(episode, addedAt) {
     sourceID: episode.sourceID,
     title: episode.title,
     audioURL: episode.audioURL,
+    // The article address travels with the snapshot too, so an entry the API
+    // window dropped can still open its original in a window of its own.
+    originalURL: episode.originalURL || "",
     durationSeconds: episode.durationSeconds || 0,
     state: episode.state,
     stage: episode.stage || "",
@@ -3003,7 +3146,10 @@ function snapshotFromEpisode(episode, addedAt) {
   };
 }
 
-function episodeFromLaterRecord(record) {
+// Every stored list keeps the same snapshot shape, so one reader serves them
+// all. A record written before the article address was kept reads as an empty
+// one and simply offers no original to open.
+function episodeFromRecord(record) {
   const publishedAt = parseDate(record.publishedAt);
   const audioURL = String(record.audioURL || "");
   const reportedState = String(record.state || "");
@@ -3014,6 +3160,7 @@ function episodeFromLaterRecord(record) {
     sourceID: String(record.sourceID || ""),
     title: String(record.title || copy.untitled),
     audioURL,
+    originalURL: String(record.originalURL || ""),
     state: EPISODE_STATES.includes(reportedState) ? reportedState : audioURL ? "ready" : "pending",
     stage: String(record.stage || ""),
     tag: normalizeTag(record.tag),
@@ -3025,13 +3172,49 @@ function episodeFromLaterRecord(record) {
   };
 }
 
-// What the saved-for-later page shows: the live episode when the API still
-// returns it, the stored snapshot otherwise.
-function listenLaterEpisodes() {
-  return listenLater.map((record) => {
+// What a stored list shows: the live episode when the API still returns it,
+// the stored snapshot otherwise.
+function episodesFromRecords(records) {
+  return records.map((record) => {
     const live = state.episodes.find((episode) => episode.id === record.id);
-    return live ? { ...live, addedAt: record.addedAt } : episodeFromLaterRecord(record);
+    return live ? { ...live, addedAt: record.addedAt } : episodeFromRecord(record);
   });
+}
+
+// A poll moved an episode on (its download finished, or it failed), so the
+// stored copies follow it; only the fields a row renders are compared. The
+// answer is null while every record already matches, which keeps a poll from
+// writing storage it has no reason to touch.
+function refreshedRecords(records) {
+  if (records.length === 0) return null;
+  // A download that just finished is the moment a stored episode changes from
+  // being addressed to being playable, which is the address a copy needs; an
+  // episode whose audio was made again is a new address to hold as well.
+  const addressed = [];
+  let changed = false;
+  const next = records.map((record) => {
+    const live = state.episodes.find((episode) => episode.id === record.id);
+    if (!live) return record;
+    const snapshot = snapshotFromEpisode(live, record.addedAt);
+    if (
+      snapshot.audioURL === record.audioURL &&
+      snapshot.originalURL === record.originalURL &&
+      snapshot.state === record.state &&
+      snapshot.durationSeconds === record.durationSeconds &&
+      snapshot.stage === record.stage &&
+      tagText(snapshot.tag) === tagText(record.tag)
+    ) {
+      return record;
+    }
+    changed = true;
+    if (snapshot.audioURL && snapshot.audioURL !== record.audioURL) addressed.push(snapshot);
+    return snapshot;
+  });
+  return changed ? { records: next, addressed } : null;
+}
+
+function listenLaterEpisodes() {
+  return episodesFromRecords(listenLater);
 }
 
 function inListenLater(id) {
@@ -3058,36 +3241,12 @@ function addEpisodeToListenLater(episode) {
   queueLaterCaching(episode);
 }
 
-// A poll moved an episode on (its download finished, or it failed), so the
-// saved copy follows it; only the fields the row renders are compared.
 function syncListenLaterSnapshots() {
-  if (listenLater.length === 0) return;
-  // A download that just finished is the moment a saved episode changes from
-  // being addressed to being playable, which is the address a copy needs; an
-  // episode whose audio was made again is a new address to hold as well.
-  const addressed = [];
-  let changed = false;
-  const records = listenLater.map((record) => {
-    const live = state.episodes.find((episode) => episode.id === record.id);
-    if (!live) return record;
-    const next = snapshotFromEpisode(live, record.addedAt);
-    if (
-      next.audioURL === record.audioURL &&
-      next.state === record.state &&
-      next.durationSeconds === record.durationSeconds &&
-      next.stage === record.stage &&
-      tagText(next.tag) === tagText(record.tag)
-    ) {
-      return record;
-    }
-    changed = true;
-    if (next.audioURL && next.audioURL !== record.audioURL) addressed.push(next);
-    return next;
-  });
-  if (!changed) return;
-  listenLater = records;
-  writeListenLaterRecords(records);
-  for (const record of addressed) queueLaterCaching(record);
+  const refreshed = refreshedRecords(listenLater);
+  if (!refreshed) return;
+  listenLater = refreshed.records;
+  writeListenLaterRecords(listenLater);
+  for (const record of refreshed.addressed) queueLaterCaching(record);
 }
 
 function toggleListenLater(episode) {
@@ -3177,6 +3336,113 @@ function saveEpisodeForLater(episode) {
   // The shared tab carries the count of what is saved.
   renderAll();
   return true;
+}
+
+// ---- Bookmarks ----
+
+// Bookmarks are the second list kept in this browser. They behave like the
+// saved-for-later one, with two differences: their copies are held to the end
+// rather than until the next sweep, and their page never depends on the day
+// the episode was published, because the list is a local one.
+function readBookmarkRecords() {
+  try {
+    const value = JSON.parse(readStoredString(BOOKMARK_KEY) || "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((record) => record && typeof record.id === "string" && record.id !== "");
+  } catch {
+    return [];
+  }
+}
+
+function writeBookmarkRecords(records) {
+  writeStorage(BOOKMARK_KEY, JSON.stringify(records.slice(0, BOOKMARK_LIMIT)));
+}
+
+function bookmarkEpisodes() {
+  return episodesFromRecords(bookmarks);
+}
+
+function inBookmarks(id) {
+  return bookmarks.some((record) => record.id === id);
+}
+
+function removeEpisodeFromBookmarks(id) {
+  const next = bookmarks.filter((record) => record.id !== id);
+  if (next.length === bookmarks.length) return false;
+  bookmarks = next;
+  writeBookmarkRecords(bookmarks);
+  // The copy stays where it is: it was only ever held on the bookmark's
+  // behalf, and from here on a sweep may take it like any other.
+  laterCacheWaiting.delete(id);
+  return true;
+}
+
+function addEpisodeToBookmarks(episode) {
+  bookmarks = [
+    snapshotFromEpisode(episode),
+    ...bookmarks.filter((record) => record.id !== episode.id),
+  ];
+  writeBookmarkRecords(bookmarks);
+  // A bookmark is a request to hold the copy, so one that already plays is
+  // fetched now; one that still waits for its download is picked up by the
+  // poll that follows, the same way a saved-for-later entry is.
+  queueLaterCaching(episode);
+}
+
+function syncBookmarkSnapshots() {
+  const refreshed = refreshedRecords(bookmarks);
+  if (!refreshed) return;
+  bookmarks = refreshed.records;
+  writeBookmarkRecords(bookmarks);
+  for (const record of refreshed.addressed) queueLaterCaching(record);
+}
+
+// Both stored lists follow the payload the same way, so a poll refreshes them
+// together.
+function syncHeldSnapshots() {
+  syncListenLaterSnapshots();
+  syncBookmarkSnapshots();
+}
+
+function toggleBookmark(episode) {
+  if (!episode) return;
+  if (inBookmarks(episode.id)) {
+    // Dropping a bookmark speaks for itself: the star leaves the row.
+    removeEpisodeFromBookmarks(episode.id);
+    renderAll();
+    return;
+  }
+  addEpisodeToBookmarks(episode);
+  showToast(copy.bookmarkAdded);
+  // The shared tab carries the count, so the header is redrawn as well, and the
+  // bookmark window follows the same redraw.
+  renderAll();
+  // An entry with no audio yet is asked for here too, so a bookmark starts its
+  // download the moment it is marked.
+  startLaterDownload(episode);
+}
+
+function clearBookmarks() {
+  bookmarks = [];
+  writeBookmarkRecords(bookmarks);
+  renderAll();
+  showToast(copy.bookmarksCleared);
+}
+
+// Both entry points -- the panel and the row menu -- ask first, because the
+// action drops everything the listener marked. An empty list has nothing to ask
+// about and says so instead.
+function confirmClearBookmarks() {
+  if (bookmarks.length === 0) {
+    showToast(copy.emptyBookmarks);
+    return;
+  }
+  openConfirmDialog({
+    title: copy.clearAllBookmarks,
+    message: copy.bookmarkClearConfirmMessage(bookmarks.length),
+    acceptLabel: copy.confirmClear,
+    onAccept: clearBookmarks,
+  });
 }
 
 // ---- Listened episodes ----
@@ -3467,6 +3733,23 @@ function episodeMenuItems(episode) {
     checked: inListenLater(id),
     onSelect: () => toggleListenLater(findEpisode(id) || episode),
   });
+  items.push({
+    label: inBookmarks(id) ? copy.removeBookmark : copy.addBookmark,
+    icon: ICON_STAR,
+    checked: inBookmarks(id),
+    onSelect: () => toggleBookmark(findEpisode(id) || episode),
+  });
+  // The article the episode was made from opens below the bookmark that holds
+  // it. A feed item that published no link leaves nothing to open, so its entry
+  // is left out rather than opening an empty window.
+  const originalURL = (findEpisode(id) || episode).originalURL;
+  if (originalURL) {
+    items.push({
+      label: copy.viewOriginal,
+      icon: ICON_OPEN_IN_NEW,
+      onSelect: () => openOriginal(originalURL),
+    });
+  }
   // A row of the saved page speaks for the whole list as well, which is the one
   // place where clearing it belongs. The narrower clear sits first, so the one
   // that keeps what is still waiting is the closer reach of the two.
@@ -3482,16 +3765,34 @@ function episodeMenuItems(episode) {
       onSelect: () => confirmClearListenLater(),
     });
   }
+  // The bookmark page carries one way out: the whole list, which asks first.
+  if (showsBookmarks(activeSlot())) {
+    items.push({
+      label: copy.clearAllBookmarks,
+      icon: ICON_TRASH,
+      onSelect: () => confirmClearBookmarks(),
+    });
+  }
   return items;
 }
 
+// The article behind an episode opens in a window of its own rather than in
+// this page, so playback keeps going and a long press on a phone never
+// navigates the list away from the listener.
+function openOriginal(url) {
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 // A menu lives longer than the row it was opened from, so its actions look the
-// current episode up again instead of holding the rendered row.
+// current episode up again instead of holding the rendered row. A bookmark can
+// outlive the API window the row came from, so its own list is searched too.
 function findEpisode(id) {
   const live = state.episodes.find((episode) => episode.id === id);
   if (live) return live;
-  const record = listenLater.find((item) => item.id === id);
-  return record ? episodeFromLaterRecord(record) : null;
+  const record =
+    listenLater.find((item) => item.id === id) || bookmarks.find((item) => item.id === id);
+  return record ? episodeFromRecord(record) : null;
 }
 
 // ---- Local audio cache ----
@@ -3611,32 +3912,45 @@ function isEpisodeCached(episode) {
 // listener is reading the row, and a redraw that a finger on the list or a
 // finished page skips must not leave the mark stale behind it.
 function renderCachedBadge(episodeID) {
-  const wrapper = elements.episodeWrapper;
-  if (!wrapper) return;
   const episode = findEpisode(episodeID);
   const cached = episode ? isEpisodeCached(episode) : false;
-  for (const row of wrapper.querySelectorAll(".episode-row")) {
-    if (row.dataset.episodeId !== episodeID) continue;
-    const badge = row.querySelector(".episode-cached");
-    if (badge) badge.hidden = !cached;
+  // A row of a page and a row of the bookmark window both say whether this
+  // device holds the copy, so the mark is written on both.
+  for (const rows of [elements.episodeWrapper, elements.bookmarkEntries]) {
+    if (!rows) continue;
+    for (const row of rows.querySelectorAll(".episode-row")) {
+      if (row.dataset.episodeId !== episodeID) continue;
+      const badge = row.querySelector(".episode-cached");
+      if (badge) badge.hidden = !cached;
+    }
   }
 }
 
-// Entering the page, or turning the choice on, checks the whole saved list: an
-// episode this device does not hold is fetched, and one that failed before is
-// asked for again from scratch.
-function cacheListenLaterEpisodes() {
-  if (!laterAutoCache) return;
-  laterCacheFailures.clear();
-  for (const episode of listenLaterEpisodes()) queueLaterCaching(episode);
+// Whether this device is asked to keep the audio of an episode. A bookmarked
+// one always is; a saved-for-later one is while its switch is on. Everything
+// that hands out, keeps or drops a copy reads this one answer.
+function holdsCopy(episode) {
+  if (!episode) return false;
+  return inBookmarks(episode.id) || (laterAutoCache && inListenLater(episode.id));
 }
 
-// One saved episode: the address it has now decides whether there is anything
+// Entering the page, or turning the save-for-later choice on, checks every list
+// this device holds for: an episode it does not hold is fetched, and one that
+// failed before is asked for again from scratch. Bookmarks are held whether
+// that choice is on or not.
+function cacheHeldEpisodes() {
+  laterCacheFailures.clear();
+  const held = [...bookmarkEpisodes()];
+  if (laterAutoCache) held.push(...listenLaterEpisodes());
+  for (const episode of held) queueLaterCaching(episode);
+}
+
+// One held episode: the address it has now decides whether there is anything
 // to fetch, and an episode already queued or being fetched is left alone. An
 // episode that has no audio yet is picked up by a later poll, once the download
 // that gives it one has finished.
 function queueLaterCaching(episode) {
-  if (!laterAutoCache || !episode || !episode.audioURL) return;
+  if (!holdsCopy(episode) || !episode.audioURL) return;
   if (isEpisodeCached(episode) || laterCacheWaiting.has(episode.id)) return;
   laterCacheWaiting.add(episode.id);
   laterCacheQueue.push(episode);
@@ -3669,7 +3983,7 @@ function fetchSavedEpisode(episode) {
 function retrySavedEpisode(episode, error) {
   const failures = (laterCacheFailures.get(episode.id) || 0) + 1;
   laterCacheFailures.set(episode.id, failures);
-  logPlayback("warn", "listen later cache failed", {
+  logPlayback("warn", "held copy cache failed", {
     episode: episode.id,
     url: episode.audioURL,
     attempt: failures,
@@ -3681,7 +3995,7 @@ function retrySavedEpisode(episode, error) {
     // from the first failure on, so what holds the copy is the browser's own
     // cache rather than a file this page can read. The retries below keep
     // asking for the bytes in the meantime.
-    logPlayback("info", "listen later copy via the media element", {
+    logPlayback("info", "held copy via the media element", {
       episode: episode.id,
       url: episode.audioURL,
     });
@@ -3718,9 +4032,10 @@ function recordCachedEpisode(episodeID, url, bytes) {
 function evictCachedEpisodes() {
   // The saved list holds its copies on purpose, so the rolling keep-limit only
   // counts the ones nothing asked to keep.
-  const saved = laterAutoCache ? new Set(listenLater.map((record) => record.id)) : null;
+  const held = new Set(bookmarks.map((record) => record.id));
+  if (laterAutoCache) for (const record of listenLater) held.add(record.id);
   const entries = Object.entries(audioCacheIndex)
-    .filter(([episodeID]) => !saved?.has(episodeID))
+    .filter(([episodeID]) => !held.has(episodeID))
     .sort((left, right) => (left[1]?.cachedAt || 0) - (right[1]?.cachedAt || 0));
   while (entries.length > AUDIO_CACHE_LIMIT) {
     const [episodeID] = entries.shift();
@@ -3757,29 +4072,45 @@ function dropCachedEpisode(episodeID) {
   renderCachedBadge(episodeID);
 }
 
-// Dropping the cache is not undone here: the saved list is left alone until
-// the page is entered again, which is when the copies are asked for afresh.
+// The copies the "Clear cache" control may drop: everything this device holds
+// except the bookmarked ones, which are held to the end. The whole cache is
+// never dropped in one go, because that would take them with it.
+function clearableCacheIDs() {
+  const bookmarked = new Set(bookmarks.map((record) => record.id));
+  return Object.keys(audioCacheIndex).filter((episodeID) => !bookmarked.has(episodeID));
+}
+
+// Dropping the cache is not undone here: every list this device holds for is
+// left alone until the page is entered again, which is when the copies are
+// asked for afresh. Bookmarked copies are not visited at all.
 function clearAudioCache() {
-  for (const episodeID of Object.keys(audioCacheIndex)) dropCachedEpisode(episodeID);
-  audioCacheIndex = {};
+  const clearable = clearableCacheIDs();
+  if (clearable.length === 0) {
+    showToast(copy.cacheEmpty);
+    return;
+  }
+  for (const episodeID of clearable) dropCachedEpisode(episodeID);
+  // Dropping a copy only takes it out of the index in memory, so the sweep keeps
+  // the stored one in step with it: a cache that came back on reload would say
+  // this device still holds what it just let go.
   writeAudioCacheIndex();
-  if (typeof caches !== "undefined") caches.delete(AUDIO_CACHE_NAME).catch(() => {});
   renderCacheSummary();
   renderEpisodeList();
   showToast(copy.cacheCleared);
 }
 
 // The panel asks before the cache is dropped, because what it holds is what
-// plays back without a network. An empty cache has nothing to ask about.
+// plays back without a network. What is held for a bookmark is not counted, so
+// a device holding nothing else has nothing to ask about.
 function confirmClearAudioCache() {
-  const totals = cachedTotals();
-  if (totals.count === 0) {
+  const count = clearableCacheIDs().length;
+  if (count === 0) {
     showToast(copy.cacheEmpty);
     return;
   }
   openConfirmDialog({
     title: copy.clearCache,
-    message: copy.cacheClearConfirmMessage(totals.count),
+    message: copy.cacheClearConfirmMessage(count),
     acceptLabel: copy.confirmClear,
     onAccept: clearAudioCache,
   });
@@ -3819,9 +4150,9 @@ async function restoreEpisodeCopy(episode) {
   dropCachedEpisode(episode.id);
   renderCacheSummary();
   renderEpisodeList();
-  // The saved list had asked for this copy to be held, so it is asked for
-  // again rather than waiting for the next visit to the page.
-  if (inListenLater(episode.id)) queueLaterCaching(episode);
+  // A stored list had asked for this copy to be held, so it is asked for again
+  // rather than waiting for the next visit to the page.
+  if (holdsCopy(episode)) queueLaterCaching(episode);
   return "";
 }
 
@@ -3881,7 +4212,7 @@ function setPersonalFlag(name, enabled) {
     writeFlag(LATER_AUTO_CACHE_KEY, enabled);
     // Turning it on is a request for the whole saved list to be held, so the
     // copies are asked for right away rather than at the next poll.
-    if (enabled) cacheListenLaterEpisodes();
+    if (enabled) cacheHeldEpisodes();
   } else {
     preloadNext = enabled;
     writeFlag(PRELOAD_NEXT_KEY, enabled);
@@ -4187,6 +4518,71 @@ function clearPlaybackLog() {
 // the caller handed over rather than one this window knows about.
 let confirmAcceptHandler = null;
 
+// ---- The bookmark window ----
+
+// The bookmark list is a view of the same rows the page draws, which is why it
+// lives in a window of its own rather than in the header: the date layout has no
+// tab to carry it, and the entries are worth reading without leaving the player.
+// Playback starts here exactly as it does from the page, and a long press opens
+// the same row menu, so there is nothing new to learn.
+function initBookmarkDialog() {
+  if (!elements.bookmarkDialog) return;
+  elements.bookmarkView?.addEventListener("click", () => {
+    // The window covers the panel it was opened from, so the panel folds away.
+    closeSettings();
+    openBookmarks();
+  });
+  elements.bookmarkClear?.addEventListener("click", () => confirmClearBookmarks());
+  elements.bookmarkClose?.addEventListener("click", () => closeBookmarks({ focusToggle: true }));
+  elements.bookmarkDialog.addEventListener("click", (event) => {
+    // Only the backdrop closes it; a click inside the card belongs to the card.
+    if (event.target === elements.bookmarkDialog) closeBookmarks({ focusToggle: true });
+  });
+  // Escape is taken from the document rather than the window, because a click
+  // inside it leaves the focus on the body. A row menu opened over the window is
+  // the closer of the two, so it is left to close on its own first.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || elements.bookmarkDialog.hidden) return;
+    if (!elements.popupMenu.hidden) return;
+    closeBookmarks({ focusToggle: true });
+  });
+}
+
+function openBookmarks() {
+  elements.bookmarkDialog.hidden = false;
+  renderBookmarks();
+  elements.bookmarkClose?.focus({ preventScroll: true });
+}
+
+function closeBookmarks({ focusToggle = false } = {}) {
+  elements.bookmarkDialog.hidden = true;
+  if (focusToggle) elements.settingsToggle?.focus({ preventScroll: true });
+}
+
+// A row drawn here belongs to the stored list wherever the listener happens to
+// be, so it names the feed an episode came from rather than the day.
+function bookmarkRowSlot() {
+  return { source: BOOKMARK_SLOT, date: "" };
+}
+
+// The window is only written while it is on screen: marking an episode from the
+// page must not cost a list nobody is reading. The rows themselves are diffed
+// rather than rebuilt, so a poll that lands while the window is open moves the
+// row it is about without scrolling the list back to the top.
+function renderBookmarks() {
+  const list = elements.bookmarkEntries;
+  if (!list || !elements.bookmarkEmpty || elements.bookmarkDialog.hidden) return;
+  const episodes = bookmarkEpisodes();
+  elements.bookmarkTitle.textContent = copy.bookmarkTitle;
+  elements.bookmarkSummary.textContent =
+    episodes.length === 0 ? "" : copy.episodeCount(episodes.length);
+  elements.bookmarkEmpty.textContent = copy.emptyBookmarks;
+  elements.bookmarkEmpty.hidden = episodes.length > 0;
+  list.hidden = episodes.length === 0;
+  if (episodes.length === 0) list.replaceChildren();
+  else renderEpisodeRows(list, episodes, bookmarkRowSlot());
+}
+
 function initConfirmDialog() {
   if (!elements.confirmDialog) return;
   elements.confirmCancel?.addEventListener("click", () => closeConfirmDialog());
@@ -4466,6 +4862,9 @@ function demoEpisode(id, sourceID, title, originalPublishedAt, publishedAt = ori
     id,
     source_id: sourceID,
     title,
+    // The demo page has no feeds to open, so the article address points at the
+    // project itself: it is there to show the entry rather than to be read.
+    original_url: `https://github.com/synrise25/rss-pod#${id}`,
     audio_url: state === "ready" ? DEMO_AUDIO : "",
     audio_duration_seconds: state === "ready" ? 30 : 0,
     published_at: publishedAt,

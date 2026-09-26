@@ -148,6 +148,10 @@ type playerEpisode struct {
 	AudioDurationSeconds int64      `json:"audio_duration_seconds,omitempty"`
 	PublishedAt          *time.Time `json:"published_at,omitempty"`
 	OriginalPublishedAt  *time.Time `json:"original_published_at,omitempty"`
+	// OriginalURL is the address of the article the episode was generated from,
+	// so a listener can open the source in a window of its own. A feed item that
+	// published no link leaves it empty and the player hides the entry.
+	OriginalURL string `json:"original_url,omitempty"`
 	// State tells the player which control to render: ready plays, pending can
 	// be started by hand, processing is already running, and failed can be tried
 	// again. Stage is set while state is processing.
@@ -264,7 +268,7 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 	// counts. Entities such as &amp; stay counted as written, which is precise
 	// enough for a threshold an operator tunes against its own feeds.
 	rows, err := s.pool.Query(r.Context(), `
-		SELECT e.id, e.source_id, e.title, e.audio_url, e.audio_object_key,
+		SELECT e.id, e.source_id, e.title, f.link, e.audio_url, e.audio_object_key,
 		       e.audio_byte_size, e.audio_duration_seconds,
 		       COALESCE(e.published_at, f.published_at), f.published_at, e.hidden_at IS NOT NULL, e.status,
 		       char_length(regexp_replace(COALESCE(NULLIF(f.content, ''), f.description), '<[^>]*>', '', 'g'))
@@ -298,6 +302,7 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 			&episode.ID,
 			&episode.SourceID,
 			&episode.Title,
+			&episode.OriginalURL,
 			&episode.AudioURL,
 			&episode.objectKey,
 			&episode.AudioByteSize,

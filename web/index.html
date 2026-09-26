@@ -211,6 +211,28 @@
                       </button>
                     </div>
                   </div>
+                  <!-- Bookmarks are read in a window of their own rather than in
+                       the list, so this group holds no switch: what it offers is
+                       the list itself and the way out of it. -->
+                  <div class="settings-group">
+                    <p id="settings-bookmark-group-label" class="settings-sublabel">Bookmarks</p>
+                    <div class="settings-later-actions">
+                      <button
+                        id="settings-bookmark-view"
+                        class="settings-later-clear"
+                        type="button"
+                      >
+                        View bookmarks
+                      </button>
+                      <button
+                        id="settings-bookmark-clear"
+                        class="settings-later-clear"
+                        type="button"
+                      >
+                        Clear bookmarks
+                      </button>
+                    </div>
+                  </div>
                   <!-- The remaining choices form a second group, with the cache
                        the last switch can build up inside it too. -->
                   <div class="settings-group">
@@ -455,13 +477,14 @@
         <button class="episode-play-button" type="button">
           <img src="/icons/play.svg" alt="" />
         </button>
-        <!-- The feed name, the badge a source rule adds beside it, and the mark
-             of a locally held copy share one grid cell, so a row without them
-             keeps the column to itself. -->
+        <!-- The feed name, the badge a source rule adds beside it, the mark of a
+             locally held copy and the star of a bookmarked one share one grid
+             cell, so a row without them keeps the column to itself. -->
         <span class="episode-source-cell">
           <span class="episode-source"></span>
           <span class="episode-tag"></span>
           <span class="episode-cached" hidden></span>
+          <span class="episode-bookmark" hidden></span>
         </span>
         <h2 class="episode-title"></h2>
         <time class="episode-time"></time>
@@ -524,6 +547,31 @@
         <div class="log-actions">
           <button id="confirm-cancel" class="log-button" type="button">Cancel</button>
           <button id="confirm-accept" class="log-button log-button-primary" type="button">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- The bookmark list is read away from the page it was marked on: the
+         window holds the same rows, so playback and the row menu behave the way
+         they do in the list. It sits below the popup menu, which a long press
+         inside it opens, and above the settings panel it is opened from. -->
+    <div
+      id="bookmark-dialog"
+      class="log-dialog bookmark-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="bookmark-title"
+      hidden
+    >
+      <div class="log-card">
+        <div class="log-head">
+          <p id="bookmark-title" class="log-title">Bookmarks</p>
+          <p id="bookmark-summary" class="log-summary" role="status"></p>
+        </div>
+        <p id="bookmark-empty" class="log-empty" hidden></p>
+        <div id="bookmark-entries" class="bookmark-entries" role="list"></div>
+        <div class="log-actions">
+          <button id="bookmark-close" class="log-button log-button-primary" type="button">Close</button>
         </div>
       </div>
     </div>

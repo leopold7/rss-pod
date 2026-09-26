@@ -11,6 +11,7 @@
   --blue-pressed: #2f6ed5;
   --cyan: #2dd4bf;
   --cached: #16a34a;
+  --bookmark: #e08a00;
   --navy: #10233f;
   --muted: #6b7f99;
   --line: #dce9f7;
@@ -1232,6 +1233,20 @@ input:focus-visible {
   height: 18px;
 }
 
+/* The star of an episode bookmarked in this browser sits beside that tick. It
+   takes no space until the entry is marked, the way the tick behaves. */
+.episode-bookmark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--bookmark);
+}
+
+.episode-bookmark-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .episode-title {
   display: -webkit-box;
   min-width: 0;
@@ -1988,6 +2003,11 @@ input:focus-visible {
     height: 15px;
   }
 
+  .episode-bookmark-icon {
+    width: 15px;
+    height: 15px;
+  }
+
   .episode-title {
     display: -webkit-box;
     grid-area: title;
@@ -2530,6 +2550,7 @@ input:focus-visible {
   --glass-border: rgb(96 140 190 / 34%);
   --blue-icon-filter: brightness(0) invert(1);
   --cached: #4ade80;
+  --bookmark: #fbbf24;
   --track: #2b405c;
   --thumb-ring: #16202f;
 }
@@ -2940,6 +2961,43 @@ input:focus-visible {
   scrollbar-color: var(--line-strong) transparent;
 }
 
+/* The bookmark window holds rows rather than a record, so it sits under the menu
+   a long press inside it opens: that menu is above the page but below the log
+   window, and this one takes the place between them. */
+.bookmark-dialog {
+  z-index: 35;
+}
+
+/* The rows scroll inside the card the way a page scrolls inside the list, and
+   the first and last row round off with the frame they sit in. */
+.bookmark-entries {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 12px 0;
+  overflow-y: auto;
+  border: 1px solid rgb(191 213 236 / 52%);
+  border-radius: 12px;
+  background: rgb(226 239 252 / 42%);
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.bookmark-entries > .episode-row {
+  border-radius: 0;
+}
+
+.bookmark-entries > .episode-row:first-child {
+  border-radius: 11px 11px 0 0;
+}
+
+.bookmark-entries > .episode-row:last-child {
+  border-bottom: 0;
+  border-radius: 0 0 11px 11px;
+}
+
+.bookmark-entries > .episode-row:only-child {
+  border-radius: 11px;
+}
+
 .log-line {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
@@ -3068,7 +3126,8 @@ input:focus-visible {
   box-shadow: 0 24px 60px rgb(0 0 0 / 52%);
 }
 
-:root[data-theme="dark"] .log-entries {
+:root[data-theme="dark"] .log-entries,
+:root[data-theme="dark"] .bookmark-entries {
   border-color: rgb(80 116 160 / 42%);
   background: rgb(11 20 32 / 72%);
 }
