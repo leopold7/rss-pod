@@ -86,8 +86,13 @@ const ICON_TRASH =
   "M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm80-120h80v-400h-80v400Zm160 0h80v-400h-80v400Z";
 const ICON_CHEVRON_DOWN =
   "M469-358q-5-2-10-7L261-563q-9-9-8.5-21.5T262-606q9-9 21.5-9t21.5 9l175 176 176-176q9-9 21-8.5t21 9.5q9 9 9 21.5t-9 21.5L501-365q-5 5-10 7t-11 2q-6 0-11-2Z";
+// The two halves of the bookmark star, drawn from the same set: the solid one
+// is the mark a bookmarked entry wears on its row, and the hollow one is what
+// the menu offers while the entry is still free to be marked.
 const ICON_STAR =
-  "m354-287 126-76 126 77-33-144 111-96-146-13-58-136-58 135-145 13 111 97-34 143Zm-52 167q-11 3-18.5-4t-4.5-18l38-165-128-111q-9-8-5.5-17.5T199-437l169-15 66-155q4-11 15-11t15 11l66 155 169 15q11 1 14.5 10.5T708-409L580-298l39 165q2 11-4.5 18t-17.5 4l-146-88-146 88Zm178-215Z";
+  "M480-269 294-157q-8 5-17 4.5t-16-5.5q-7-5-10.5-13t-1.5-18l49-212-164-143q-8-7-9.5-15.5t.5-16.5q2-8 9-13.5t17-6.5l217-19 84-200q4-9 12-13.5t16-4.5q8 0 16 4.5t12 13.5l84 200 217 19q10 1 17 6.5t9 13.5q2 8 .5 16.5T826-544L662-401l49 212q2 10-1.5 18T699-158q-7 5-16 5.5t-17-4.5L480-269Z";
+const ICON_STAR_OUTLINE =
+  "m323-245 157-94 157 95-42-178 138-120-182-16-71-168-71 167-182 16 138 120-42 178Zm157-24L294-157q-8 5-17 4.5t-16-5.5q-7-5-10.5-13t-1.5-18l49-212-164-143q-8-7-9.5-15.5t.5-16.5q2-8 9-13.5t17-6.5l217-19 84-200q4-9 12-13.5t16-4.5q8 0 16 4.5t12 13.5l84 200 217 19q10 1 17 6.5t9 13.5q2 8 .5 16.5T826-544L662-401l49 212q2 10-1.5 18T699-158q-7 5-16 5.5t-17-4.5L480-269Zm0-206Z";
 const ICON_OPEN_IN_NEW =
   "M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z";
 
@@ -3715,7 +3720,11 @@ function openPopupMenu({ anchor = null, x = null, y = null, items = [], label = 
     button.role = selectable ? "menuitemradio" : "menuitem";
     if (selectable) button.setAttribute("aria-checked", String(Boolean(item.checked)));
     button.disabled = Boolean(item.disabled);
-    button.append(createIcon(item.icon || "", "popup-menu-icon"));
+    const icon = createIcon(item.icon || "", "popup-menu-icon");
+    // An entry that names a tone paints its icon with it; the rest keep the
+    // colour the text runs in, which is how a plain entry has always looked.
+    if (item.tone) icon.classList.add(`popup-menu-icon-${item.tone}`);
+    button.append(icon);
     const text = document.createElement("span");
     text.className = "popup-menu-label";
     text.textContent = item.label;
@@ -3861,40 +3870,53 @@ function openEpisodeMenu(episode, { x = null, y = null, anchor = null } = {}) {
 // retries a download, and reports the stage of one that is already running. The
 // second item always offers the saved-for-later toggle. The saved page adds the
 // one action that belongs to the page rather than to the row.
+//
+// Every entry names a tone for its icon, which is the colour the menu paints it
+// in: the control that acts on the episode wears the accent, the two stored
+// lists wear the colours their marks wear in the row, and an entry that only
+// takes something away wears the soft red.
 function episodeMenuItems(episode) {
   const id = episode.id;
   const items = [];
   const playing = id === state.currentEpisodeID && !elements.audio.paused;
   if (episode.state === "processing") {
-    items.push({ label: stageText(episode.stage), icon: ICON_DOWNLOAD, disabled: true });
+    items.push({ label: stageText(episode.stage), icon: ICON_DOWNLOAD, tone: "accent", disabled: true });
   } else if (episode.state === "failed") {
     items.push({
       label: copy.menuRetry,
       icon: ICON_RETRY,
+      tone: "accent",
       onSelect: () => startEpisodeDownload(findEpisode(id) || episode),
     });
   } else if (episode.state === "pending") {
     items.push({
       label: copy.menuDownload,
       icon: ICON_DOWNLOAD,
+      tone: "accent",
       onSelect: () => startEpisodeDownload(findEpisode(id) || episode),
     });
   } else {
     items.push({
       label: playing ? copy.pause : copy.play,
       icon: playing ? ICON_PAUSE : ICON_PLAY,
+      tone: "accent",
       onSelect: () => toggleEpisode(findEpisode(id) || episode),
     });
   }
   items.push({
     label: inListenLater(id) ? copy.removeListenLater : copy.addListenLater,
     icon: ICON_BOOKMARK,
+    tone: "later",
     checked: inListenLater(id),
     onSelect: () => toggleListenLater(findEpisode(id) || episode),
   });
   items.push({
     label: inBookmarks(id) ? copy.removeBookmark : copy.addBookmark,
-    icon: ICON_STAR,
+    // The menu draws the star the entry ends up with rather than the one it has:
+    // picking "Bookmark" fills it, picking "Remove bookmark" empties it, and the
+    // mark on the right is what says which of the two the entry is now.
+    icon: inBookmarks(id) ? ICON_STAR_OUTLINE : ICON_STAR,
+    tone: "bookmark",
     checked: inBookmarks(id),
     onSelect: () => toggleBookmark(findEpisode(id) || episode),
   });
@@ -3906,6 +3928,7 @@ function episodeMenuItems(episode) {
     items.push({
       label: copy.viewOriginal,
       icon: ICON_OPEN_IN_NEW,
+      tone: "accent",
       onSelect: () => openOriginal(originalURL),
     });
   }
@@ -3916,11 +3939,13 @@ function episodeMenuItems(episode) {
     items.push({
       label: copy.clearListenedLater,
       icon: ICON_TRASH,
+      tone: "clear",
       onSelect: () => confirmClearListenedLater(),
     });
     items.push({
       label: copy.clearAllLater,
       icon: ICON_TRASH,
+      tone: "clear",
       onSelect: () => confirmClearListenLater(),
     });
   }
@@ -3929,6 +3954,7 @@ function episodeMenuItems(episode) {
     items.push({
       label: copy.clearAllBookmarks,
       icon: ICON_TRASH,
+      tone: "clear",
       onSelect: () => confirmClearBookmarks(),
     });
   }

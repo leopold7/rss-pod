@@ -12,6 +12,10 @@
   --cyan: #2dd4bf;
   --cached: #16a34a;
   --bookmark: #e08a00;
+  /* The red of an action that only takes something away. It is a soft one on
+     purpose: the entries that carry it sit in the same menu as the ones that
+     play and save, and a full-strength red would shout over them. */
+  --danger: #db7c74;
   --navy: #10233f;
   --muted: #6b7f99;
   --line: #dce9f7;
@@ -2489,6 +2493,26 @@ input:focus-visible {
   fill: currentColor;
 }
 
+/* The colour a menu entry's icon is painted in. The control that acts on the
+   episode takes the accent, the saved list and the bookmarks take the colours
+   their marks wear in a row, and an entry without a tone keeps the colour the
+   text runs in. */
+.popup-menu-icon-accent {
+  color: var(--blue);
+}
+
+.popup-menu-icon-later {
+  color: var(--cached);
+}
+
+.popup-menu-icon-bookmark {
+  color: var(--bookmark);
+}
+
+.popup-menu-icon-clear {
+  color: var(--danger);
+}
+
 .popup-menu-label {
   flex: 1 1 auto;
   min-width: 0;
@@ -2551,6 +2575,7 @@ input:focus-visible {
   --blue-icon-filter: brightness(0) invert(1);
   --cached: #4ade80;
   --bookmark: #fbbf24;
+  --danger: #e59a93;
   --track: #2b405c;
   --thumb-ring: #16202f;
 }
