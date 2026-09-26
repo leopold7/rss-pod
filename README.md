@@ -13,14 +13,19 @@ Compared with the upstream project, this fork adds the following features:
 - **Listen later**: long-press an episode to add it to "Listen later", which is
   shown as its own category, can be removed automatically after playing, and can
   be cleared in one step
+- **Bookmarks**: long-press an episode to bookmark it, kept as a second local
+  category beside "Listen later" and marked with a star in the list; they open
+  in a window of their own whose rows keep the usual row menu, including a link
+  to the original article, and a bookmarked episode is cached and held even when
+  the cache is swept or cleared
 - **Dim listened episodes**: already-listened episodes can be dimmed by title to
   mark them as heard
 - **Local cache**: automatically preload the next episode; episodes saved for later
   can be cached on the device too, with the missing ones fetched when the page is
   opened and a green tick shown beside the feed or date of what is held locally
 - **Default category**: open the page directly in a specific category
-- **First category**: choose whether the shared first category lists every feed
-  or the episodes saved for later
+- **First category**: choose whether the shared first category lists every feed,
+  the episodes saved for later, or the bookmarked ones
 - **Player**: marquee title, plus a collapsible drawer
 - **Article filter**: whitelist or blacklist the articles of a source by title
   regular expression
@@ -266,8 +271,8 @@ player preferences which are stored in the current browser:
   the header tabs in category mode and the row of sources in date mode; once
   that row outgrows the screen it scrolls, its tail fades out as it goes, and a
   button joins it that opens every category at once, each entry counted, next to
-  "All" and "Listen later". The button is shown by default and can be turned off
-  again in the same panel, in which case the row is left plain.
+  "All", "Listen later" and "Bookmarks". The button is shown by default and can
+  be turned off again in the same panel, in which case the row is left plain.
 
 The player dock is a drawer as well. The handle in its top-right corner folds it
 down to a slim bar that keeps the play control and the current title, which hands
