@@ -696,3 +696,90 @@ func TestPlayerEpisodeTagsMeasureTheArticleText(t *testing.T) {
 		}
 	}
 }
+
+// A page that follows a running download asks for the episodes it is watching
+// instead of for the whole window, so the list has to answer for the ids it was
+// given and for nothing else. An episode that is no longer listed - a download
+// that failed - stays out of that answer, which is how the page learns that the
+// row left the list.
+func TestPlayerEpisodesNarrowToListedIDs(t *testing.T) {
+	pool := adminTestPool(t)
+	cfg := &config.Config{Sources: []config.SourceConfig{{ID: "test", Name: "Test", Enabled: true}}}
+	mux := newPlayerMux(newPlayerServer(cfg, pool, nil))
+
+	ctx := context.Background()
+	insert := func(status string) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		if _, err := pool.Exec(ctx, `
+			WITH f AS (
+			    INSERT INTO feed_items (source_id, external_id, title, content, published_at)
+			    VALUES ('test', $2, 'Episode', 'content', now())
+			    RETURNING id
+			)
+			INSERT INTO episodes (id, source_id, feed_item_id, title, status, audio_url, published_at)
+			SELECT $1, 'test', id, 'Episode', $3,
+			       CASE WHEN $3 = 'published' THEN 'https://media.example.com/one.mp3' ELSE '' END,
+			       now() FROM f
+		`, id, uuid.NewString(), status); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	first := insert("published")
+	second := insert("published")
+	failed := insert("failed")
+
+	listed := func(query string) []uuid.UUID {
+		t.Helper()
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/player/episodes?"+query, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d: %s", query, response.Code, response.Body.String())
+		}
+		var payload struct {
+			Episodes []struct {
+				ID uuid.UUID `json:"id"`
+			} `json:"episodes"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		ids := make([]uuid.UUID, 0, len(payload.Episodes))
+		for _, episode := range payload.Episodes {
+			ids = append(ids, episode.ID)
+		}
+		return ids
+	}
+
+	if ids := listed("ids=" + first.String()); len(ids) != 1 || ids[0] != first {
+		t.Fatalf("ids=[%s] listed %v, want that episode alone", first, ids)
+	}
+	if ids := listed("ids=" + first.String() + "," + second.String() + "," + failed.String()); len(ids) != 2 {
+		t.Fatalf("ids with a failed episode listed %v, want the two published episodes", ids)
+	}
+	// An empty parameter is the window a page reads when it has no list yet.
+	if ids := listed(""); len(ids) != 2 {
+		t.Fatalf("the window listed %v, want the two published episodes", ids)
+	}
+}
+
+// The ids a poll sends are episode IDs, and anything else is refused before the
+// database is asked: this test needs no pool.
+func TestPlayerEpisodesRejectInvalidIDs(t *testing.T) {
+	t.Parallel()
+
+	mux := newPlayerMux(&playerServer{})
+	for _, query := range []string{
+		"ids=not-an-id",
+		"ids=" + uuid.NewString() + ",nope",
+		"ids=" + uuid.NewString() + ",,%20" + uuid.NewString(),
+	} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/player/episodes?"+query, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400", query, response.Code)
+		}
+	}
+}

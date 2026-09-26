@@ -10,6 +10,7 @@
   --blue-hover: #3b82f6;
   --blue-pressed: #2f6ed5;
   --cyan: #2dd4bf;
+  --cached: #16a34a;
   --navy: #10233f;
   --muted: #6b7f99;
   --line: #dce9f7;
@@ -1204,6 +1205,21 @@ input:focus-visible {
   align-items: center;
 }
 
+/* The mark of an episode this device holds: a green tick beside the feed name
+   or the date, which is the column it belongs to. It takes no space at all
+   until the copy is there. */
+.episode-cached {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--cached);
+}
+
+.episode-cached-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .episode-title {
   display: -webkit-box;
   min-width: 0;
@@ -1955,6 +1971,11 @@ input:focus-visible {
     font-size: 11px;
   }
 
+  .episode-cached-icon {
+    width: 15px;
+    height: 15px;
+  }
+
   .episode-title {
     display: -webkit-box;
     grid-area: title;
@@ -2496,6 +2517,7 @@ input:focus-visible {
   --focus: #5eead4;
   --glass-border: rgb(96 140 190 / 34%);
   --blue-icon-filter: brightness(0) invert(1);
+  --cached: #4ade80;
   --track: #2b405c;
   --thumb-ring: #16202f;
 }

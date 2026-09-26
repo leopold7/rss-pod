@@ -15,7 +15,9 @@ Compared with the upstream project, this fork adds the following features:
   be cleared in one step
 - **Dim listened episodes**: already-listened episodes can be dimmed by title to
   mark them as heard
-- **Local cache**: automatically preload the next episode
+- **Local cache**: automatically preload the next episode; episodes saved for later
+  can be cached on the device too, with the missing ones fetched when the page is
+  opened and a green tick shown beside the feed or date of what is held locally
 - **Default category**: open the page directly in a specific category
 - **First category**: choose whether the shared first category lists every feed
   or the episodes saved for later

@@ -179,6 +179,21 @@
                           <span class="settings-switch-knob" aria-hidden="true"></span>
                         </button>
                       </div>
+                      <div class="settings-switch-row">
+                        <span id="settings-later-cache-label" class="settings-switch-text"
+                          >Cache Listen later episodes locally</span
+                        >
+                        <button
+                          id="settings-later-cache"
+                          class="settings-switch"
+                          type="button"
+                          role="switch"
+                          aria-checked="false"
+                          aria-labelledby="settings-later-cache-label"
+                        >
+                          <span class="settings-switch-knob" aria-hidden="true"></span>
+                        </button>
+                      </div>
                     </div>
                     <button id="settings-later-clear" class="settings-later-clear" type="button">
                       Clear all Listen later
@@ -216,7 +231,8 @@
                         </button>
                       </div>
                     </div>
-                    <!-- The cache summary only appears while local loading is on. -->
+                    <!-- The cache summary and the control that drops it belong to
+                         every choice that builds the cache up. -->
                     <p id="settings-cache-summary" class="settings-cache" role="status" hidden></p>
                     <button id="settings-cache-clear" class="settings-cache-clear" type="button" hidden>
                       Clear cache
@@ -427,11 +443,13 @@
         <button class="episode-play-button" type="button">
           <img src="/icons/play.svg" alt="" />
         </button>
-        <!-- The feed name and the badge a source rule adds beside it share one
-             grid cell, so a row without a badge keeps the column to itself. -->
+        <!-- The feed name, the badge a source rule adds beside it, and the mark
+             of a locally held copy share one grid cell, so a row without them
+             keeps the column to itself. -->
         <span class="episode-source-cell">
           <span class="episode-source"></span>
           <span class="episode-tag"></span>
+          <span class="episode-cached" hidden></span>
         </span>
         <h2 class="episode-title"></h2>
         <time class="episode-time"></time>

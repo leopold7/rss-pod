@@ -16,6 +16,7 @@ const LATER_AUTO_REMOVE_KEY = "rss-pod.personal-later-auto-remove";
 const LATER_AUTO_DOWNLOAD_KEY = "rss-pod.personal-later-auto-download";
 const DIM_LISTENED_KEY = "rss-pod.personal-dim-listened";
 const PRELOAD_NEXT_KEY = "rss-pod.personal-preload-next";
+const LATER_AUTO_CACHE_KEY = "rss-pod.personal-later-auto-cache";
 const AUDIO_CACHE_KEY = "rss-pod.audio-cache";
 const AUDIO_CACHE_NAME = "rss-pod-audio-v1";
 // What the player asked the browser for and what came back. The list is a
@@ -45,6 +46,10 @@ const LISTEN_LATER_LIMIT = 200;
 // Only the episode that is playing and the one after it are worth holding
 // locally, so a handful of entries covers a queue and its lookahead.
 const AUDIO_CACHE_LIMIT = 5;
+// The saved list is checked as a whole, so its copies are fetched a few at a
+// time: a listener with a hundred saved episodes should not put a hundred
+// requests on the wire the moment the page opens.
+const LATER_CACHE_CONCURRENCY = 3;
 // The marquee crawls rather than scrolls: about twenty pixels a second, which
 // is roughly one character per second, and a whole cycle stays under a minute.
 const MARQUEE_PIXELS_PER_SECOND = 20;
@@ -157,6 +162,8 @@ const copy = {
     laterDownloadLabel: "Move a manual download into Listen later",
     dimListenedLabel: "Dim listened episodes",
     preloadNextLabel: "Load the next episode locally",
+    laterCacheLabel: "Cache Listen later episodes locally",
+    cachedLocally: "Cached on this device",
     clearCache: "Clear cache",
     cacheCleared: "Cache cleared",
     cacheEmpty: "Nothing cached yet",
@@ -271,6 +278,8 @@ const copy = {
     laterDownloadLabel: "手动下载自动移动至稍后在听",
     dimListenedLabel: "已听过的标题置灰",
     preloadNextLabel: "自动本地加载下一个博客",
+    laterCacheLabel: "稍后再听自动缓存至本地",
+    cachedLocally: "已缓存至本地",
     clearCache: "清除缓存",
     cacheCleared: "已清除缓存",
     cacheEmpty: "还没有本地缓存",
@@ -379,6 +388,8 @@ const elements = {
   dimListenedToggle: document.querySelector("#settings-dim"),
   preloadNextLabel: document.querySelector("#settings-preload-label"),
   preloadNextToggle: document.querySelector("#settings-preload"),
+  laterCacheLabel: document.querySelector("#settings-later-cache-label"),
+  laterCacheToggle: document.querySelector("#settings-later-cache"),
   cacheSummary: document.querySelector("#settings-cache-summary"),
   cacheClear: document.querySelector("#settings-cache-clear"),
   laterClear: document.querySelector("#settings-later-clear"),
@@ -465,6 +476,7 @@ let laterAutoRemove = readFlag(LATER_AUTO_REMOVE_KEY);
 let laterAutoDownload = readFlag(LATER_AUTO_DOWNLOAD_KEY);
 let dimListened = readFlag(DIM_LISTENED_KEY);
 let preloadNext = readFlag(PRELOAD_NEXT_KEY);
+let laterAutoCache = readFlag(LATER_AUTO_CACHE_KEY);
 // The first tab of the feed row is shared: it lists every feed until the
 // caret switches it to the episodes saved on this device. The slot keeps its
 // identity, so switching views never rebuilds the pages behind the swipe.
@@ -474,7 +486,9 @@ let primaryView = "all";
 let audioCacheIndex = readAudioCacheIndex();
 const cachedBlobURLs = new Map();
 const preloadElements = new Map();
-const preloadsInFlight = new Set();
+// The copy being fetched for one URL, so two callers asking for the same audio
+// share one request rather than starting a second.
+const preloadsInFlight = new Map();
 // The menu, a long press, and the marquee each remember one thing at a time.
 let popupMenuAnchor = null;
 let popupMenuIgnoreClick = false;
@@ -527,6 +541,9 @@ document.addEventListener("visibilitychange", () => {
   updateGreeting();
   // Coming back to the page is a good moment to catch up with a download.
   if (state.episodes.some((episode) => episode.state === "processing")) refreshEpisodes();
+  // It is also a fresh look at the saved list: entering the page is when a
+  // copy that was cleared, or one that was never made, is asked for again.
+  cacheListenLaterEpisodes();
 });
 
 // The poll timer is declared before the first load: a load that has no request
@@ -632,6 +649,9 @@ async function loadPlayer() {
     const payload = await (isDemoMode() ? demoPayload() : fetchPlayerData());
     if (payload === null) return;
     applyPayload(payload);
+    // The saved list is checked once the page has its episodes, which is where
+    // an episode that was cleared from this device is fetched again.
+    cacheListenLaterEpisodes();
     selectInitialEpisode();
     scheduleRefresh();
   } catch (error) {
@@ -667,21 +687,81 @@ function applyInitialView() {
   state.activeSource = resolveCategory(defaultCategory);
 }
 
-// A running download is the only reason to poll: the episode list already
-// reports the state and the stage of every episode, which also brings a page
-// that was reloaded mid-download back up to date.
+// A running download is the only reason to poll: an episode of one moves a
+// stage on every few seconds, and the page that was reloaded mid-download read
+// the window it shows as it opened.
 function scheduleRefresh() {
   window.clearTimeout(refreshTimer);
   refreshTimer = 0;
   if (isDemoMode() || document.hidden) return;
   if (isAdminPage && !adminCSRF) return;
-  if (!state.episodes.some((episode) => episode.state === "processing")) return;
-  refreshTimer = window.setTimeout(refreshEpisodes, REFRESH_INTERVAL);
+  if (downloadingEpisodeIDs().length === 0) return;
+  refreshTimer = window.setTimeout(refreshEpisodeProgress, REFRESH_INTERVAL);
 }
 
-// refreshEpisodes replaces the data and redraws the rows, but it never touches
-// the audio element or the selected episode, so a download never interrupts
-// what is playing.
+// The episodes a poll has something to learn about.
+function downloadingEpisodeIDs() {
+  return state.episodes.filter((episode) => episode.state === "processing").map((episode) => episode.id);
+}
+
+// A tick of the poll asks for the rows of the running downloads rather than for
+// the window again: the page already holds every other row, and one download
+// names a handful of episodes. The window itself is read when the page is
+// opened or comes back to the front, which is where a new episode, a different
+// day, or the feed list shows up.
+async function refreshEpisodeProgress() {
+  window.clearTimeout(refreshTimer);
+  refreshTimer = 0;
+  const ids = downloadingEpisodeIDs();
+  if (ids.length === 0) return;
+  try {
+    const episodes = await fetchEpisodeProgress(ids);
+    if (episodes === null) return;
+    applyEpisodeProgress(ids, episodes);
+    renderAll();
+  } catch (error) {
+    console.error("refresh episode progress", error);
+  } finally {
+    scheduleRefresh();
+  }
+}
+
+// The answer replaces the rows it names and drops the ones it leaves out. An
+// episode a download failed on is no longer listed, which is what reading the
+// whole window used to say by leaving that row out as well.
+function applyEpisodeProgress(ids, episodes) {
+  const updates = new Map();
+  for (const episode of episodes) {
+    const normalized = normalizeEpisode(episode);
+    if (normalized.id) updates.set(normalized.id, normalized);
+  }
+  const watched = new Set(ids);
+  state.episodes = state.episodes
+    .filter((episode) => !watched.has(episode.id) || updates.has(episode.id))
+    .map((episode) => updates.get(episode.id) || episode)
+    // A row that just arrived keeps the place its own timestamp gives it, the
+    // same way reading the window again would place it.
+    .sort((a, b) => b.sortTime - a.sortTime);
+  syncListenLaterSnapshots();
+}
+
+async function fetchEpisodeProgress(ids) {
+  const params = new URLSearchParams({ ids: ids.join(",") });
+  const response = await fetch(
+    `/api/v1/${isAdminPage ? "admin" : "player"}/episodes?${params}`,
+    { headers: { Accept: "application/json" } },
+  );
+  if (isAdminPage && response.status === 401) {
+    showAdminLogin(adminCopy.expired);
+    return null;
+  }
+  if (!response.ok) throw new Error(`episode progress returned ${response.status}`);
+  const payload = await response.json();
+  return Array.isArray(payload.episodes) ? payload.episodes : [];
+}
+
+// The whole window: the feed list and every row the list shows, which is more
+// than a poll needs but is what an opening page or a stale one asks for.
 async function refreshEpisodes() {
   window.clearTimeout(refreshTimer);
   refreshTimer = 0;
@@ -1395,6 +1475,14 @@ function createEpisodeRow(episode, slot = null) {
   });
   bindRowContextMenu(row, live);
 
+  // The mark of a locally held copy is built once with the row, because a row
+  // outlives the cache entry it was built beside and only ever toggles it.
+  const cached = row.querySelector(".episode-cached");
+  cached.append(createIcon(ICON_CHECK, "episode-cached-icon"));
+  cached.setAttribute("role", "img");
+  cached.setAttribute("aria-label", copy.cachedLocally);
+  cached.title = copy.cachedLocally;
+
   updateEpisodeRow(row, episode, slot);
   return row;
 }
@@ -1439,6 +1527,11 @@ function updateEpisodeRow(row, episode, slot = null) {
   const tagLabel = tagText(episode.tag);
   if (tag.textContent !== tagLabel) tag.textContent = tagLabel;
   tag.classList.toggle("is-visible", tagLabel !== "");
+
+  // A copy this device holds is marked beside that same column, which is the
+  // one that names the episode's feed or its date.
+  const cached = row.querySelector(".episode-cached");
+  cached.hidden = !isEpisodeCached(episode);
 
   // The heading can also hold the admin badge, so the title is written into a
   // text node of its own rather than replacing everything the heading holds.
@@ -1650,7 +1743,17 @@ function hideToast() {
   if (elements.toast) elements.toast.hidden = true;
 }
 
-function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
+// The selection the element is being prepared for. Looking the copy of an
+// episode up is the one step here that waits, so a selection that lands while
+// it waits is recognised by its number and never gets the element.
+let selectionSerial = 0;
+
+// The element is given its source once the copy this browser holds - if there
+// is one - has been turned back into an address it can play.
+async function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
+  // Every selection takes a number of its own, so a copy that is read back for
+  // the episode before this one never lands on the element after it.
+  const selection = ++selectionSerial;
   // Moving on is the moment the episode before this one is behind the
   // listener, which is when the saved list may let go of it.
   const previousEpisodeID = state.currentEpisodeID;
@@ -1679,8 +1782,12 @@ function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
   // attempt the player scheduled for the episode before this one is dropped.
   probedSourceURL = "";
   cancelScheduledRetry();
-  // A cached episode plays from the copy this page already holds.
-  const source = retrySourceURL(audioSourceFor(episode));
+  // The selection claims the element before the copy it plays is looked up, so
+  // the listener who asks for another episode in the meantime wins. What the
+  // copy decides is the address: one this browser holds is what lets the
+  // episode play without asking the network for it again.
+  const source = retrySourceURL(await audioSourceFor(episode));
+  if (selection !== selectionSerial) return;
   elements.audio.src = source;
   elements.audio.load();
   // The chosen source is the first thing the log needs: a local copy that fails
@@ -1734,7 +1841,7 @@ async function safePlay(episodeID = state.currentEpisodeID) {
 
 // A listener who asks for audio again gets a full set of attempts back; the
 // retries the player spends on its own belong to one run of one episode.
-function requestPlayback() {
+async function requestPlayback() {
   playFailures = 0;
   // A listener who asks again also asks the source again: the same question put
   // to the network a moment later can have a different answer.
@@ -1747,7 +1854,10 @@ function requestPlayback() {
   if (elements.audio.error) {
     const episode = findEpisode(state.currentEpisodeID);
     if (episode) {
-      selectEpisode(episode, { autoplay: true, resumeAt: elements.audio.currentTime || 0 });
+      // Selecting the episode over puts the source back together; the wait is
+      // for the copy it plays, which is looked up before the element is given
+      // it, so the play() behind this is not refused by the old source again.
+      await selectEpisode(episode, { autoplay: true, resumeAt: elements.audio.currentTime || 0 });
       return;
     }
   }
@@ -1925,14 +2035,18 @@ function retryPlayback(episodeID) {
     wait: `${Math.round(wait / 1000)}s`,
   });
   cancelScheduledRetry();
-  retryTimer = window.setTimeout(() => {
+  retryTimer = window.setTimeout(async () => {
     retryTimer = 0;
     // A listener who paused, or who moved to another episode, is no longer
     // waiting for this attempt.
     if (state.currentEpisodeID !== episodeID || !playingIntent) return;
     const episode = findEpisode(episodeID);
     if (!episode) return;
-    elements.audio.src = retrySourceURL(audioSourceFor(episode));
+    const source = retrySourceURL(await audioSourceFor(episode));
+    // Looking the copy up takes a moment, and the listener may have stopped
+    // waiting in it.
+    if (state.currentEpisodeID !== episodeID || !playingIntent) return;
+    elements.audio.src = source;
     elements.audio.load();
     if (resumeAt > 0) {
       elements.audio.addEventListener(
@@ -2341,6 +2455,7 @@ function applyLocale() {
   elements.laterDownloadLabel.textContent = copy.laterDownloadLabel;
   elements.dimListenedLabel.textContent = copy.dimListenedLabel;
   elements.preloadNextLabel.textContent = copy.preloadNextLabel;
+  elements.laterCacheLabel.textContent = copy.laterCacheLabel;
   elements.cacheClear.textContent = copy.clearCache;
   elements.laterClear.textContent = copy.clearAllLater;
   elements.settingsDiagnosticsLabel.textContent = copy.playbackLogLabel;
@@ -2921,12 +3036,20 @@ function addEpisodeToListenLater(episode) {
     ...listenLater.filter((record) => record.id !== episode.id),
   ];
   writeListenLaterRecords(listenLater);
+  // Saving an episode is a request to hold it, so one that already plays is
+  // fetched now; one that still waits for its download is picked up below,
+  // once the poll that moved it on gave it an address.
+  queueLaterCaching(episode);
 }
 
 // A poll moved an episode on (its download finished, or it failed), so the
 // saved copy follows it; only the fields the row renders are compared.
 function syncListenLaterSnapshots() {
   if (listenLater.length === 0) return;
+  // A download that just finished is the moment a saved episode changes from
+  // being addressed to being playable, which is the address a copy needs; an
+  // episode whose audio was made again is a new address to hold as well.
+  const addressed = [];
   let changed = false;
   const records = listenLater.map((record) => {
     const live = state.episodes.find((episode) => episode.id === record.id);
@@ -2942,11 +3065,13 @@ function syncListenLaterSnapshots() {
       return record;
     }
     changed = true;
+    if (next.audioURL && next.audioURL !== record.audioURL) addressed.push(next);
     return next;
   });
   if (!changed) return;
   listenLater = records;
   writeListenLaterRecords(records);
+  for (const record of addressed) queueLaterCaching(record);
 }
 
 function toggleListenLater(episode) {
@@ -3363,36 +3488,40 @@ function preloadNextEpisode() {
   if (next) preloadEpisodeAudio(next);
 }
 
+// A lookahead copy is best effort: a host this page cannot read from, or a
+// file it cannot hold, is not asked for again here, so the media element is
+// given the episode instead and its size stays unknown.
 function preloadEpisodeAudio(episode) {
+  storeEpisodeAudio(episode).catch(() => preloadViaAudioElement(episode));
+}
+
+// The bytes of one episode are fetched and kept in this browser's cache, and
+// the index entry remembers which address they came from. The promise settles
+// with the size of the copy and rejects when no copy could be made. A fetch
+// already running for the same address is shared rather than repeated.
+function storeEpisodeAudio(episode) {
   const url = episode.audioURL;
-  if (!url || preloadsInFlight.has(url)) return;
-  if (cachedBlobURLs.has(url) || audioCacheIndex[episode.id]?.url === url) return;
-  preloadsInFlight.add(url);
-  if (typeof caches === "undefined" || !window.isSecureContext) {
-    preloadsInFlight.delete(url);
-    preloadViaAudioElement(episode);
-    return;
+  if (!url) return Promise.resolve(null);
+  if (cachedBlobURLs.has(url) || audioCacheIndex[episode.id]?.url === url) {
+    return Promise.resolve(null);
   }
-  fetch(url, { cache: "no-store" })
-    .then((response) => {
-      if (!response.ok) {
-        logPlayback("warn", "preload HTTP error", { episode: episode.id, status: response.status, url });
-        throw new Error(`audio preload returned ${response.status}`);
-      }
-      return response.blob();
-    })
-    .then(async (blob) => {
-      const cache = await caches.open(AUDIO_CACHE_NAME);
-      await cache.put(url, new Response(blob, { headers: { "Content-Type": blob.type || "audio/mpeg" } }));
-      cachedBlobURLs.set(url, URL.createObjectURL(blob));
-      recordCachedEpisode(episode.id, url, blob.size);
-    })
-    .catch(() => {
-      // A cross-origin audio host without CORS headers cannot be read here, so
-      // the media element fetches it instead; its size stays unknown.
-      preloadViaAudioElement(episode);
-    })
-    .finally(() => preloadsInFlight.delete(url));
+  const running = preloadsInFlight.get(url);
+  if (running) return running;
+  const copy = (async () => {
+    if (typeof caches === "undefined" || !window.isSecureContext) {
+      throw new Error("this browser cannot hold a local copy");
+    }
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`audio cache returned ${response.status}`);
+    const blob = await response.blob();
+    const cache = await caches.open(AUDIO_CACHE_NAME);
+    await cache.put(url, new Response(blob, { headers: { "Content-Type": blob.type || "audio/mpeg" } }));
+    cachedBlobURLs.set(url, URL.createObjectURL(blob));
+    recordCachedEpisode(episode.id, url, blob.size);
+    return blob.size;
+  })().finally(() => preloadsInFlight.delete(url));
+  preloadsInFlight.set(url, copy);
+  return copy;
 }
 
 function preloadViaAudioElement(episode) {
@@ -3407,6 +3536,116 @@ function preloadViaAudioElement(episode) {
   audio.load();
 }
 
+// ---- Copies held for the saved list ----
+
+// What is being fetched for the saved list right now, what is waiting for a
+// slot, and how many attempts each episode has spent. None of it survives a
+// reload: entering the page again starts the whole check over.
+const laterCacheQueue = [];
+const laterCacheWaiting = new Set();
+const laterCacheFailures = new Map();
+let laterCacheRunning = 0;
+
+// Whether this device already holds the audio the episode plays. The index is
+// the record of what plays back without asking the network, so it is also what
+// the row's badge and the settings summary read.
+function isEpisodeCached(episode) {
+  return Boolean(episode?.audioURL) && audioCacheIndex[episode.id]?.url === episode.audioURL;
+}
+
+// The mark of a copy is written straight onto the rows that show the episode,
+// rather than waiting for the list to be drawn again: a copy is held while the
+// listener is reading the row, and a redraw that a finger on the list or a
+// finished page skips must not leave the mark stale behind it.
+function renderCachedBadge(episodeID) {
+  const wrapper = elements.episodeWrapper;
+  if (!wrapper) return;
+  const episode = findEpisode(episodeID);
+  const cached = episode ? isEpisodeCached(episode) : false;
+  for (const row of wrapper.querySelectorAll(".episode-row")) {
+    if (row.dataset.episodeId !== episodeID) continue;
+    const badge = row.querySelector(".episode-cached");
+    if (badge) badge.hidden = !cached;
+  }
+}
+
+// Entering the page, or turning the choice on, checks the whole saved list: an
+// episode this device does not hold is fetched, and one that failed before is
+// asked for again from scratch.
+function cacheListenLaterEpisodes() {
+  if (!laterAutoCache) return;
+  laterCacheFailures.clear();
+  for (const episode of listenLaterEpisodes()) queueLaterCaching(episode);
+}
+
+// One saved episode: the address it has now decides whether there is anything
+// to fetch, and an episode already queued or being fetched is left alone. An
+// episode that has no audio yet is picked up by a later poll, once the download
+// that gives it one has finished.
+function queueLaterCaching(episode) {
+  if (!laterAutoCache || !episode || !episode.audioURL) return;
+  if (isEpisodeCached(episode) || laterCacheWaiting.has(episode.id)) return;
+  laterCacheWaiting.add(episode.id);
+  laterCacheQueue.push(episode);
+  runLaterCacheQueue();
+}
+
+function runLaterCacheQueue() {
+  while (laterCacheRunning < LATER_CACHE_CONCURRENCY && laterCacheQueue.length > 0) {
+    fetchSavedEpisode(laterCacheQueue.shift());
+  }
+}
+
+function fetchSavedEpisode(episode) {
+  laterCacheRunning += 1;
+  storeEpisodeAudio(episode)
+    .then(() => {
+      laterCacheFailures.delete(episode.id);
+      laterCacheWaiting.delete(episode.id);
+    })
+    .catch((error) => retrySavedEpisode(episode, error))
+    .finally(() => {
+      laterCacheRunning -= 1;
+      runLaterCacheQueue();
+    });
+}
+
+// A copy that could not be made is asked for again on the player's own
+// schedule - after a second, three seconds and nine seconds - and then left to
+// the media element, the way a lookahead copy is.
+function retrySavedEpisode(episode, error) {
+  const failures = (laterCacheFailures.get(episode.id) || 0) + 1;
+  laterCacheFailures.set(episode.id, failures);
+  logPlayback("warn", "listen later cache failed", {
+    episode: episode.id,
+    url: episode.audioURL,
+    attempt: failures,
+    reason: `${error?.name || "Error"}: ${error?.message || ""}`,
+  });
+  if (failures === 1) {
+    // A media host that sends no CORS headers cannot be read from this page at
+    // all, and that is the common case: the media element is given the episode
+    // from the first failure on, so what holds the copy is the browser's own
+    // cache rather than a file this page can read. The retries below keep
+    // asking for the bytes in the meantime.
+    logPlayback("info", "listen later copy via the media element", {
+      episode: episode.id,
+      url: episode.audioURL,
+    });
+    preloadViaAudioElement(episode);
+  }
+  if (failures > RETRY_BACKOFF_MS.length) {
+    laterCacheWaiting.delete(episode.id);
+    return;
+  }
+  // The episode stays claimed while the retry waits, so a poll that lands in
+  // between does not jump the queue and ask for the file again straight away.
+  window.setTimeout(() => {
+    laterCacheWaiting.delete(episode.id);
+    queueLaterCaching(episode);
+  }, RETRY_BACKOFF_MS[failures - 1]);
+}
+
 function recordCachedEpisode(episodeID, url, bytes) {
   const previous = audioCacheIndex[episodeID];
   if (previous && previous.url !== url) dropCachedEpisode(episodeID);
@@ -3418,12 +3657,18 @@ function recordCachedEpisode(episodeID, url, bytes) {
   evictCachedEpisodes();
   writeAudioCacheIndex();
   renderCacheSummary();
+  // A row says whether this device holds its audio, so the rows of this episode
+  // follow the cache as well as the settings panel does.
+  renderCachedBadge(episodeID);
 }
 
 function evictCachedEpisodes() {
-  const entries = Object.entries(audioCacheIndex).sort(
-    (left, right) => (left[1]?.cachedAt || 0) - (right[1]?.cachedAt || 0),
-  );
+  // The saved list holds its copies on purpose, so the rolling keep-limit only
+  // counts the ones nothing asked to keep.
+  const saved = laterAutoCache ? new Set(listenLater.map((record) => record.id)) : null;
+  const entries = Object.entries(audioCacheIndex)
+    .filter(([episodeID]) => !saved?.has(episodeID))
+    .sort((left, right) => (left[1]?.cachedAt || 0) - (right[1]?.cachedAt || 0));
   while (entries.length > AUDIO_CACHE_LIMIT) {
     const [episodeID] = entries.shift();
     dropCachedEpisode(episodeID);
@@ -3454,14 +3699,20 @@ function dropCachedEpisode(episodeID) {
     preload.removeAttribute("src");
     preload.load();
   }
+  // A row that was marked as held is unmarked with the copy: the keep-limit
+  // dropping the oldest one is as much a change to the rows as a fresh copy is.
+  renderCachedBadge(episodeID);
 }
 
+// Dropping the cache is not undone here: the saved list is left alone until
+// the page is entered again, which is when the copies are asked for afresh.
 function clearAudioCache() {
   for (const episodeID of Object.keys(audioCacheIndex)) dropCachedEpisode(episodeID);
   audioCacheIndex = {};
   writeAudioCacheIndex();
   if (typeof caches !== "undefined") caches.delete(AUDIO_CACHE_NAME).catch(() => {});
   renderCacheSummary();
+  renderEpisodeList();
   showToast(copy.cacheCleared);
 }
 
@@ -3481,20 +3732,58 @@ function confirmClearAudioCache() {
   });
 }
 
-// The audio of one entry is only ever used through its object URL, so the
-// cached bytes are what plays back without asking the network again.
-function audioSourceFor(episode) {
-  return cachedBlobURLs.get(episode.audioURL) || episode.audioURL;
+// The audio of one entry is only ever used through an object URL, so the copy
+// this page holds is used as it is and one that outlived the page is read back
+// out of the browser's cache first. Either way the episode plays without
+// asking the network for its bytes again.
+async function audioSourceFor(episode) {
+  const held = cachedBlobURLs.get(episode.audioURL);
+  if (held) return held;
+  return (await restoreEpisodeCopy(episode)) || episode.audioURL;
+}
+
+// The bytes a previous visit put into the browser's cache are turned back into
+// an address the element can play. A copy that is no longer there is dropped
+// instead: the row stops claiming it, and the saved list fetches it afresh.
+async function restoreEpisodeCopy(episode) {
+  const entry = audioCacheIndex[episode.id];
+  // Only a copy whose bytes were read is worth looking for. A bare index entry
+  // is what a host without CORS headers leaves behind, and those bytes are the
+  // media element's own business.
+  if (!entry?.url || entry.url !== episode.audioURL || !(Number(entry.bytes) > 0)) return "";
+  if (typeof caches === "undefined" || !window.isSecureContext) return "";
+  try {
+    const cache = await caches.open(AUDIO_CACHE_NAME);
+    const response = await cache.match(entry.url);
+    if (response) {
+      const objectURL = URL.createObjectURL(await response.blob());
+      cachedBlobURLs.set(entry.url, objectURL);
+      return objectURL;
+    }
+  } catch {
+    return "";
+  }
+  dropCachedEpisode(episode.id);
+  renderCacheSummary();
+  renderEpisodeList();
+  // The saved list had asked for this copy to be held, so it is asked for
+  // again rather than waiting for the next visit to the page.
+  if (inListenLater(episode.id)) queueLaterCaching(episode);
+  return "";
 }
 
 function renderCacheSummary() {
   const summary = elements.cacheSummary;
   const clear = elements.cacheClear;
   if (!summary || !clear) return;
-  summary.hidden = !preloadNext;
-  clear.hidden = !preloadNext;
-  if (!preloadNext) return;
   const totals = cachedTotals();
+  // Either choice can build the cache up, and a copy left behind by one that
+  // was turned off is still worth reporting: the summary and the control that
+  // drops it follow whatever this device holds.
+  const holdsCopies = preloadNext || laterAutoCache || totals.count > 0;
+  summary.hidden = !holdsCopies;
+  clear.hidden = !holdsCopies;
+  if (!holdsCopies) return;
   if (totals.count === 0) summary.textContent = copy.cacheEmpty;
   else if (totals.sized) summary.textContent = copy.cacheSummary(formatBytes(totals.bytes), totals.count);
   else summary.textContent = copy.cacheSummaryUnknown(totals.count);
@@ -3515,6 +3804,9 @@ function initPersonalSettings() {
   elements.preloadNextToggle?.addEventListener("click", () =>
     setPersonalFlag("preloadNext", !preloadNext),
   );
+  elements.laterCacheToggle?.addEventListener("click", () =>
+    setPersonalFlag("laterAutoCache", !laterAutoCache),
+  );
   elements.cacheClear?.addEventListener("click", () => confirmClearAudioCache());
   elements.laterClear?.addEventListener("click", () => confirmClearListenLater());
   renderPersonalSettings();
@@ -3530,6 +3822,12 @@ function setPersonalFlag(name, enabled) {
   } else if (name === "dimListened") {
     dimListened = enabled;
     writeFlag(DIM_LISTENED_KEY, enabled);
+  } else if (name === "laterAutoCache") {
+    laterAutoCache = enabled;
+    writeFlag(LATER_AUTO_CACHE_KEY, enabled);
+    // Turning it on is a request for the whole saved list to be held, so the
+    // copies are asked for right away rather than at the next poll.
+    if (enabled) cacheListenLaterEpisodes();
   } else {
     preloadNext = enabled;
     writeFlag(PRELOAD_NEXT_KEY, enabled);
@@ -3546,6 +3844,7 @@ function renderPersonalSettings() {
   setSwitchState(elements.laterDownloadToggle, laterAutoDownload);
   setSwitchState(elements.dimListenedToggle, dimListened);
   setSwitchState(elements.preloadNextToggle, preloadNext);
+  setSwitchState(elements.laterCacheToggle, laterAutoCache);
   renderCacheSummary();
 }
 

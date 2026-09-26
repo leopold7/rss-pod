@@ -230,6 +230,17 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 		limit = parsed
 	}
 
+	// A poll that follows a running download asks for the episodes it is
+	// watching rather than for the whole window, which leaves `since`, `before`
+	// and `limit` to the callers that read the list for the first time.
+	ids, ok := parseEpisodeIDs(w, r.URL.Query().Get("ids"))
+	if !ok {
+		return
+	}
+	if len(ids) > 0 {
+		limit = len(ids)
+	}
+
 	since, ok := parseOptionalRFC3339(w, r.URL.Query().Get("since"), "since")
 	if !ok {
 		return
@@ -267,9 +278,10 @@ func (s *playerServer) episodes(w http.ResponseWriter, r *http.Request, includeH
 		  AND ($1 = '' OR e.source_id = $1)
 		  AND ($2::timestamptz IS NULL OR COALESCE(e.published_at, f.published_at) >= $2)
 		  AND ($3::timestamptz IS NULL OR COALESCE(e.published_at, f.published_at) < $3)
+		  AND (COALESCE(cardinality($7::uuid[]), 0) = 0 OR e.id = ANY($7::uuid[]))
 		ORDER BY COALESCE(e.published_at, f.published_at) DESC NULLS LAST
 		LIMIT $4
-	`, sourceID, since, before, limit, includeHidden, s.pollOnlySources)
+	`, sourceID, since, before, limit, includeHidden, s.pollOnlySources, ids)
 	if err != nil {
 		slog.Error("query player episodes", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load episodes")
@@ -377,4 +389,29 @@ func parseOptionalRFC3339(w http.ResponseWriter, value, field string) (*time.Tim
 		return nil, false
 	}
 	return &parsed, true
+}
+
+// parseEpisodeIDs reads the episodes a list is narrowed to. An empty value asks
+// for the whole window, which is what a caller that has no list yet needs.
+func parseEpisodeIDs(w http.ResponseWriter, value string) ([]uuid.UUID, bool) {
+	if value == "" {
+		return nil, true
+	}
+	parts := strings.Split(value, ",")
+	// The bound matches the largest window a player page can ask for, so a poll
+	// can never ask for more episodes than a full list would have returned.
+	if len(parts) > 500 {
+		writeError(w, http.StatusBadRequest, "ids must name at most 500 episodes")
+		return nil, false
+	}
+	ids := make([]uuid.UUID, 0, len(parts))
+	for _, part := range parts {
+		id, err := uuid.Parse(strings.TrimSpace(part))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "ids must be comma separated episode IDs")
+			return nil, false
+		}
+		ids = append(ids, id)
+	}
+	return ids, true
 }
