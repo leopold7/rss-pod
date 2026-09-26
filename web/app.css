@@ -758,25 +758,22 @@ input:focus-visible {
   mask-image: linear-gradient(to right, #000 calc(100% - var(--category-fade, 0px)), transparent 100%);
 }
 
+/* The button is only the icon: the row it opens is the one that carries the
+   line, so a box of its own would cut the two in half. It paints no background
+   and keeps no room around the icon, growing to exactly what it draws. */
 .category-menu-toggle {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
   padding: 0;
-  border: 1px solid rgb(191 213 236 / 66%);
-  border-radius: 12px;
-  background: rgb(255 255 255 / 72%);
+  border: 0;
+  background: none;
   color: var(--navy);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 82%);
   cursor: pointer;
 }
 
 .category-menu-toggle:hover {
-  border-color: rgb(117 175 237 / 72%);
-  background: var(--surface-blue);
   color: var(--blue-hover);
 }
 
@@ -1803,8 +1800,7 @@ input:focus-visible {
 
   .github-link,
   .theme-toggle,
-  .settings-toggle,
-  .category-menu-toggle {
+  .settings-toggle {
     width: 42px;
     height: 42px;
   }
@@ -2125,7 +2121,9 @@ input:focus-visible {
     animation: none !important;
   }
 
-  .popup-menu {
+  .popup-menu,
+  .popup-scrim,
+  .settings-scrim {
     animation: none !important;
   }
 
@@ -2312,6 +2310,12 @@ input:focus-visible {
   box-shadow: 0 20px 44px rgb(0 0 0 / 48%), inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
+/* A dark page needs a heavier veil to read as one: the same tint over it would
+   hardly tell the floating surface apart from what is behind it. */
+:root[data-theme="dark"] :is(.popup-scrim, .settings-scrim) {
+  background: rgb(4 10 18 / 58%);
+}
+
 :root[data-theme="dark"] .popup-menu-item:hover:not(:disabled) {
   background: rgb(110 168 251 / 16%);
 }
@@ -2323,6 +2327,42 @@ input:focus-visible {
 
 :root[data-theme="dark"] .episode-title.is-listened {
   color: var(--muted);
+}
+
+/* The veil a menu floats over. A tap meant for the page lands on it instead,
+   which is the tap that closes the menu, so leaving the menu never means aiming
+   at anything small. It sits under the menu and over the header and its panel,
+   which are the two things it has to cover. */
+.popup-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: rgb(16 35 63 / 28%);
+  animation: scrim-in 140ms ease-out;
+}
+
+/* The same veil for the settings panel, which closes on a tap for the same
+   reason. It is a child of the header rather than of the body, because the
+   header is the stacking context the panel hangs in: the veil has to cover the
+   header itself and still stay under the panel, and only a z-index inside that
+   context can do both. The header's own backdrop blur gives it a containing
+   block of the header's box, so its size is spelled out as the viewport -- the
+   box it would have anyway if that blur ever went away. */
+.settings-scrim {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 25;
+  background: rgb(16 35 63 / 28%);
+  animation: scrim-in 140ms ease-out;
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
 }
 
 /* Both the "All" dropdown and a long press on a row open this menu. It is
@@ -2511,13 +2551,13 @@ input:focus-visible {
   box-shadow: 0 4px 12px rgb(0 0 0 / 24%);
 }
 
-:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle, .category-menu-toggle) {
+:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle) {
   border-color: rgb(80 116 160 / 52%);
   background: rgb(255 255 255 / 8%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
-:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle, .category-menu-toggle):hover {
+:root[data-theme="dark"] :is(.github-link, .theme-toggle, .settings-toggle):hover {
   border-color: rgb(110 168 251 / 58%);
   background: rgb(110 168 251 / 16%);
 }

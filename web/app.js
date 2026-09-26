@@ -54,8 +54,9 @@ const MARQUEE_MAX_SECONDS = 60;
 const MARQUEE_TRAVEL_SHARE = 0.34;
 // How far, at most, the category row fades out towards the button that opens
 // the whole list. A phone shows fewer tabs at once, so the fade is a shorter
-// stretch of the row there.
-const CATEGORY_FADE_PX = { wide: 92, small: 74 };
+// stretch of the row there. It stays a soft edge rather than a wide veil: the
+// entry it covers is only just leaving, and the row is read right up to it.
+const CATEGORY_FADE_PX = { wide: 56, small: 46 };
 
 // Material Symbols Rounded, the same set as the icons under web/icons.
 const ICON_PLAY =
@@ -356,6 +357,7 @@ const elements = {
   githubLink: document.querySelector("#github-link"),
   settingsToggle: document.querySelector("#settings-toggle"),
   settingsPanel: document.querySelector("#settings-panel"),
+  settingsScrim: document.querySelector("#settings-scrim"),
   settingsTitle: document.querySelector("#settings-title"),
   settingsThemeSection: document.querySelector("#settings-theme-section"),
   settingsThemeLabel: document.querySelector("#settings-theme-label"),
@@ -397,6 +399,7 @@ const elements = {
   logCopy: document.querySelector("#log-copy"),
   logClear: document.querySelector("#log-clear"),
   logClose: document.querySelector("#log-close"),
+  popupScrim: document.querySelector("#popup-scrim"),
   popupMenu: document.querySelector("#popup-menu"),
   settingsLanguageLabel: document.querySelector("#settings-language-label"),
   settingsGithubLink: document.querySelector("#settings-github-link"),
@@ -839,10 +842,16 @@ function syncCategoryFade() {
 // "all" caret opens, with the feeds the row can only reach by scrolling added
 // to it, and it reads the same in either layout -- while the list is grouped by
 // date a feed filters the day that is on screen, which is what its count says.
+// Exactly one entry is ticked, and it is the page in front -- the same control
+// the row marks -- so the two never disagree about where the listener is. The
+// first tab is the page in front of a feed only while it is really the one
+// showing: the saved list carries that tab while the first tab is set to it,
+// and a feed carries its own entry either way.
 function openCategoryMenu() {
   const toggle = elements.categoryMenuToggle;
   if (!toggle) return;
   const byLater = primaryView === LATER_SLOT;
+  const onFirstTab = state.activeSource === "all";
   openPopupMenu({
     anchor: toggle,
     label: copy.categoryMenuLabel,
@@ -850,19 +859,19 @@ function openCategoryMenu() {
       {
         label: copy.allSources,
         count: menuCount("all"),
-        checked: !byLater && state.activeSource === "all",
+        checked: !byLater && onFirstTab,
         onSelect: () => selectPrimarySource("all"),
       },
       {
         label: copy.listenLater,
         count: menuCount(LATER_SLOT),
-        checked: byLater,
+        checked: byLater && onFirstTab,
         onSelect: () => selectPrimarySource(LATER_SLOT),
       },
       ...state.sources.map((source) => ({
         label: source.name,
         count: menuCount(source.id),
-        checked: !byLater && state.activeSource === source.id,
+        checked: state.activeSource === source.id,
         onSelect: () => selectPrimarySource(source.id),
       })),
     ],
@@ -882,15 +891,18 @@ function menuCount(sourceID) {
   ).length;
 }
 
-// A menu entry picks the page the row would have picked: a feed lists every
-// episode of it, and the saved list is the shared first tab.
+// A menu entry picks the page the row would have picked. The two entries that
+// name the first tab -- the whole list and the saved list -- also set what that
+// tab carries. A feed is only a page beside it, so reaching one leaves the tab
+// as the listener set it: walking the feeds is not a way of putting the whole
+// list back in its place.
 function selectPrimarySource(sourceID) {
   if (sourceID === LATER_SLOT) {
     setPrimaryView(LATER_SLOT);
     selectSlot({ source: "all" });
     return;
   }
-  setPrimaryView("all");
+  if (sourceID === "all") setPrimaryView("all");
   selectSlot({ source: sourceID });
 }
 
@@ -2485,11 +2497,15 @@ function initSettings() {
 
 function openSettings() {
   elements.settingsPanel.hidden = false;
+  // The veil joins the panel: a tap on the page behind it closes what it
+  // covers, the way the menus behave.
+  if (elements.settingsScrim) elements.settingsScrim.hidden = false;
   elements.settingsToggle.setAttribute("aria-expanded", "true");
 }
 
 function closeSettings(focusToggle = false) {
   elements.settingsPanel.hidden = true;
+  if (elements.settingsScrim) elements.settingsScrim.hidden = true;
   elements.settingsToggle.setAttribute("aria-expanded", "false");
   if (focusToggle) elements.settingsToggle.focus();
 }
@@ -3129,6 +3145,9 @@ function openPopupMenu({ anchor = null, x = null, y = null, items = [], label = 
   }
 
   menu.hidden = false;
+  // The veil is what a tap outside the menu lands on; the menu itself stays
+  // above it, so the entry that is picked is still the one under the finger.
+  if (elements.popupScrim) elements.popupScrim.hidden = false;
   positionPopupMenu(menu, anchor, x, y);
   popupMenuAnchor = anchor;
   popupMenuOpenedAt = Date.now();
@@ -3167,6 +3186,7 @@ function closePopupMenu({ focusAnchor = false } = {}) {
   if (!menu || menu.hidden) return;
   menu.hidden = true;
   menu.replaceChildren();
+  if (elements.popupScrim) elements.popupScrim.hidden = true;
   popupMenuIgnoreClick = false;
   const anchor = popupMenuAnchor;
   popupMenuAnchor = null;

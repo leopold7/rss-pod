@@ -41,6 +41,10 @@
   <body>
     <main class="app-shell">
       <header class="page-header">
+        <!-- The veil the settings panel floats over. It lives inside the header
+             because that is the stacking context the panel hangs in: it has to
+             paint over the header itself and still stay under the panel. -->
+        <div id="settings-scrim" class="settings-scrim" hidden></div>
         <div class="header-heading-row">
           <h1 id="greeting">What's worth a listen?</h1>
           <div class="header-actions">
@@ -435,7 +439,10 @@
     </template>
 
     <!-- One menu serves both the "All" dropdown and the long-press actions of a
-         row. It hangs off the body because the tab row and the pages scroll. -->
+         row. It hangs off the body because the tab row and the pages scroll.
+         The veil stays behind it while it is open, so a tap outside the menu
+         lands on the veil rather than on the page under it. -->
+    <div id="popup-scrim" class="popup-scrim" hidden></div>
     <div id="popup-menu" class="popup-menu" role="menu" hidden></div>
 
     <!-- The playback log floats over the page: it is read on the device that
