@@ -1917,6 +1917,9 @@ async function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
   // A selection that is not meant to play leaves the dock stopped on purpose.
   playingIntent = Boolean(autoplay);
   if (previousEpisodeID && previousEpisodeID !== episode.id) {
+    // Moving on is what makes the episode before this one a listened one: the
+    // mark lands as it goes behind the listener, never as it opens.
+    if (startedEpisodeID === previousEpisodeID) markEpisodeListened(previousEpisodeID);
     releaseListenedFromListenLater(previousEpisodeID);
   }
   state.restoringResume = resumeAt > 0;
@@ -2094,6 +2097,10 @@ let stallMarkTime = 0;
 // listener's own controls set it, which tells a pause nobody asked for apart
 // from a deliberate one.
 let playingIntent = false;
+// The episode that really reached the element since it was selected, which is
+// what tells an episode the listener heard from one that was only opened: only
+// the former counts as listened when they move on or it plays through.
+let startedEpisodeID = "";
 let playRequestedAt = 0;
 // The attempt budget belongs to one episode: a new selection starts a fresh
 // count, and so does a listener who asks for the same episode again.
@@ -2397,8 +2404,10 @@ function resumePendingPlayback() {
 function stopUnplayableEpisode(episodeID) {
   clearStallWatchdog();
   pausePlayback();
-  // The episode that never played is not a listened one, so the saved list keeps
-  // it for the next attempt.
+  // The episode that never played is not a listened one, so it is not left
+  // counting as started: moving on from it later will not mark it as heard.
+  if (startedEpisodeID === episodeID) startedEpisodeID = "";
+  // The saved list keeps it for the next attempt.
   unmarkEpisodeListened(episodeID);
   showToast(copy.playbackFailed);
   renderPlaybackState();
@@ -2453,7 +2462,9 @@ function bindPlayerEvents() {
   elements.nextButton.addEventListener("click", () => moveInQueue(1));
   elements.audio.addEventListener("play", renderPlaybackState);
   elements.audio.addEventListener("play", () => {
-    markEpisodeListened(state.currentEpisodeID);
+    // Reaching the element is what the episode needed to be counted as one the
+    // listener heard; the mark itself waits until they move on or it ends.
+    startedEpisodeID = state.currentEpisodeID;
     // Playing an episode is the moment to pull the next one down for the rest
     // of the trip.
     preloadNextEpisode();
@@ -2487,8 +2498,9 @@ function bindPlayerEvents() {
     // dropping it first would take the episode out of its own queue, and the
     // player would jump back to the top of the list or stop entirely.
     const next = queueNeighbour(1);
-    // An episode that played through is done with, even when it was the last
-    // one in the queue and nothing follows it.
+    // An episode that played through is listened, and is done with even when it
+    // was the last one in the queue and nothing follows it.
+    markEpisodeListened(state.currentEpisodeID);
     releaseListenedFromListenLater(state.currentEpisodeID);
     if (next) {
       selectEpisode(next, { autoplay: true });
@@ -3659,10 +3671,11 @@ function isListened(id) {
   return Boolean(id) && Boolean(listened[id]);
 }
 
-// Playing an episode is enough to count as listened: a listener who moves on
-// before the end has still heard it. The saved list is left alone here, because
-// dropping the episode the moment it starts would empty the list under the
-// listener's finger; it lets go once the episode is behind them.
+// An episode counts as listened once it has played through, or once the
+// listener has moved on to another one: opening an episode is not hearing it.
+// The saved list is left alone here, because dropping the episode the moment it
+// starts would empty the list under the listener's finger; it lets go once the
+// episode is behind them.
 function markEpisodeListened(id) {
   if (!id || listened[id]) return;
   listened[id] = Date.now();
