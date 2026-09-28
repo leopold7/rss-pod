@@ -132,3 +132,19 @@ jobs:
             --verify-tag \
             --notes-file release-notes.md \
             --title "$RELEASE_TAG"
+
+  # Release 建好后由本工作流直接构建并附上 APK。
+  # 不能依赖 “release: published” 事件：Release 是上面用 GITHUB_TOKEN 创建的，而 GitHub
+  # 不会为 GITHUB_TOKEN 触发的事件启动新的 workflow run，事件发出去了也没人接，附件区
+  # 只会剩下自动生成的 Source code。
+  # 因此这里显式调用可复用工作流；Release 已存在时它仍会跑，用 --clobber 覆盖附件，
+  # 手动重跑本工作流因此可以给历史 Release 补齐 APK。
+  apk:
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/android-apk.yml
+    with:
+      release_tag: ${{ github.event.inputs.tag || github.ref_name }}
+    secrets: inherit

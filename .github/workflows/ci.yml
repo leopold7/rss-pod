@@ -8,6 +8,9 @@ on:
     branches: ["**"]
   pull_request:
   # Release 建好后只跑 android：把 APK 构建出来并挂成 Release 附件。
+  # 注意：release.yml 用 GITHUB_TOKEN 创建的 Release 不会触发这里——GitHub 不会为
+  # GITHUB_TOKEN 触发的事件启动新的 workflow run，所以那条路径改由 release.yml 直接
+  # 调用可复用工作流完成；保留本事件只是为了兜底“在网页上手工创建 Release”的情况。
   release:
     types: [published]
   # 手动触发：可以临时覆盖 APK 打开的地址。留空则取仓库变量 RSS_POD_WEB_URL。
@@ -96,156 +99,15 @@ jobs:
           cache-to: type=gha,mode=max
 
   android:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 构建细节都在可复用工作流里，这里只声明“谁来跑、能拿什么权限、传什么输入”。
+    uses: ./.github/workflows/android-apk.yml
+    # 上传 Release 附件需要写权限；分支推送时用不到，但 job 级权限无法按事件区分。
     permissions:
-      # 只有 release 触发的那次需要写权限：把 APK 上传成 Release 附件。
       contents: write
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Resolve build inputs
-        id: build
-        env:
-          INPUT_URL: ${{ github.event.inputs.web_url }}
-          VARIABLE_URL: ${{ vars.RSS_POD_WEB_URL }}
-          SECRET_URL: ${{ secrets.RSS_POD_WEB_URL }}
-          ALL_VARIABLES: ${{ toJSON(vars) }}
-          PLACEHOLDER_URL: https://pod.example.com
-        run: |
-          set -euo pipefail
-
-          # 先把 vars 里本次运行真正看得见的变量名打出来（只打名字，不打值）。
-          # 名字拼错、大小写不同、建到了 Secrets 或 Environments 页，这三种情况都会在这里现形。
-          variables="$(jq -r 'keys | join(", ")' <<< "$ALL_VARIABLES")"
-          if [ -z "$variables" ]; then variables="（一个都没有）"; fi
-          echo "本次运行可见的仓库变量名：$variables"
-
-          # 三处都能配，按优先级取值，并且把每一处到底配没配打出来。
-          if [ -n "$VARIABLE_URL" ]; then
-            echo "仓库变量 RSS_POD_WEB_URL：已设置"
-          else
-            echo "仓库变量 RSS_POD_WEB_URL：未设置"
-          fi
-          if [ -n "$SECRET_URL" ]; then
-            echo "仓库 Secret RSS_POD_WEB_URL：已设置（它不该放这里，应改到 Variables 页）"
-          else
-            echo "仓库 Secret RSS_POD_WEB_URL：未设置"
-          fi
-
-          url="${INPUT_URL:-}"
-          source="手动输入的地址"
-          if [ -z "$url" ]; then url="${VARIABLE_URL:-}"; source="仓库变量 RSS_POD_WEB_URL"; fi
-          if [ -z "$url" ]; then url="${SECRET_URL:-}"; source="仓库 Secret RSS_POD_WEB_URL"; fi
-          if [ -z "$url" ]; then url="$PLACEHOLDER_URL"; source="内置占位值"; fi
-
-          case "$url" in
-            https://*|http://*) ;;
-            *) echo "::error::取到的地址不是 http(s) 绝对地址：'$url'（来源：$source）"; exit 1 ;;
-          esac
-
-          if [ "$source" = "内置占位值" ]; then
-            echo "::warning::没有取到部署地址，本次 APK 会打开 $url。请在仓库 Settings → Secrets and variables → Actions 的 Variables 页新建 RSS_POD_WEB_URL（注意不是 Secrets 页）。"
-          fi
-          echo "APK 将加载 $url（来源：$source）"
-
-          # Release 触发的运行取 tag 作为版本名；普通提交与手动触发取一次性的 dev 版本，
-          # 文件名再带上短 hash，下载后能直接对上是哪次提交。
-          tag="${{ github.event.release.tag_name }}"
-          if [ -z "$tag" ]; then
-            version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
-            apk="rss-pod-${version}-${GITHUB_SHA:0:7}.apk"
-          else
-            version="${tag#v}"
-            apk="rss-pod-${version}.apk"
-          fi
-
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "apk=$apk" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "### Android APK"
-            echo ""
-            echo "| 项目 | 值 |"
-            echo "| --- | --- |"
-            echo "| 页面地址 | \`${url}\` |"
-            echo "| 地址来源 | ${source} |"
-            echo "| 版本 | \`${version}\` |"
-            echo "| 提交 | \`${GITHUB_SHA:0:7}\`（\`${GITHUB_REF_NAME}\`） |"
-            echo "| 产物 | \`${apk}\` |"
-            echo ""
-            echo "APK 在本页底部的 Artifacts 区，名字就是上表里的产物名。"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      # 由 setup-gradle 提供 gradle 命令，仓库里因此不必提交 gradle-wrapper.jar 这类二进制。
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.13"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: "platforms;android-35 build-tools;35.0.0"
-
-      - name: Build release APK
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          args=(-p android
-                -Prsspod.baseUrl="${{ steps.build.outputs.url }}"
-                -Prsspod.versionName="${{ steps.build.outputs.version }}"
-                -Prsspod.versionCode="$GITHUB_RUN_NUMBER")
-
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            args+=(-Prsspod.storeFile="$RUNNER_TEMP/release.keystore"
-                   -Prsspod.storePassword="$STORE_PASSWORD"
-                   -Prsspod.keyAlias="$KEY_ALIAS"
-                   -Prsspod.keyPassword="$KEY_PASSWORD")
-            echo "使用 release keystore 签名" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，本次产出 debug 签名的包，只能自测、不可分发"
-            echo "> 未配置签名 secrets，本次为 debug 签名。" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # 无 keystore 时 release 变体自动退回 debug 签名（见 app/build.gradle.kts）。
-          gradle "${args[@]}" assembleRelease
-
-      - name: Package the APK
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk "dist/${{ steps.build.outputs.apk }}"
-          sha256sum "dist/${{ steps.build.outputs.apk }}"
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.build.outputs.apk }}
-          path: dist/*.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Attach APK to the GitHub release
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-          gh release upload "$TAG" dist/*.apk --clobber --repo "$GITHUB_REPOSITORY"
-          echo "已上传到 Release：$TAG" >> "$GITHUB_STEP_SUMMARY"
+    with:
+      # 只有手动触发才会填这个输入；其余情况由可复用工作流按仓库变量/占位值兜底。
+      web_url: ${{ github.event.inputs.web_url }}
+      # release 事件时把 tag 传下去，让 APK 既进 Artifacts 也挂成 Release 附件。
+      release_tag: ${{ github.event.release.tag_name }}
+    # 签名用的 4 个 ANDROID_* secrets 与可选的 RSS_POD_WEB_URL 一并透传。
+    secrets: inherit

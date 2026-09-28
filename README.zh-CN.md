@@ -397,12 +397,16 @@ PKCS12 不区分 store 与 key 密码，所以 `ANDROID_KEYSTORE_PASSWORD` 与
 `ANDROID_KEY_PASSWORD` 填同一个值。没有配置签名 secrets 时工作流仍会构建，只是退回
 debug 签名并在日志里注明，这样 fork 也能正常出包。
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 里的 `android` job 与测试并行构建，
-有三条出包路径：
+构建步骤都在可复用工作流
+[`.github/workflows/android-apk.yml`](.github/workflows/android-apk.yml) 里，由 CI 与发布流程分别调用，
+共有三条出包路径：
 
 - 每次推送到 `main` 以及每个 pull request 都会构建，并把 `rss-pod-<版本>-<提交>.apk`
   留在该次运行的 Artifacts 里，于是任意一次提交的测试包都只差一次下载；
-- 每次 GitHub Release 发布后自动构建，并把 `rss-pod-<版本>.apk` 作为附件挂上去；
+- 打 tag 发版时由 [`release.yml`](.github/workflows/release.yml) 在镜像推送、Release 建好之后直接
+  调用，把 `rss-pod-<版本>.apk` 作为附件挂上去。这里必须显式调用：Release 是用
+  `GITHUB_TOKEN` 创建的，而 GitHub 不会为 `GITHUB_TOKEN` 触发的事件启动新的 workflow run，
+  所以按 `release: published` 事件联动的那条路永远不会触发，附件区只会剩自动生成的源码包；
 - 手动触发（`workflow_dispatch`），可以临时覆盖地址。
 
 `RSS_POD_WEB_URL` 是仓库**变量**而不是 secret：`vars` 只读
@@ -474,9 +478,9 @@ ghcr.io/synrise25/rss-pod
 ```
 
 发布标签包括完整语义版本、主次版本以及 `latest`。镜像成功发布后，工作流还会自动创建
-同名 GitHub Release，并生成版本说明；同一个 Release 上还会由
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 里的 `android` job 附上
-Android APK，详见 [Android 客户端](#android-客户端)。
+同名 GitHub Release，并生成版本说明；随后由本工作流自己调用可复用工作流
+[`.github/workflows/android-apk.yml`](.github/workflows/android-apk.yml) 构建 APK，作为附件挂到
+这个 Release 上，详见 [Android 客户端](#android-客户端)。
 
 ## 配置
 

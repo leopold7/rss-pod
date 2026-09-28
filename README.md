@@ -491,13 +491,20 @@ PKCS12 keeps no separate key password, so `ANDROID_KEYSTORE_PASSWORD` and
 workflow still builds, signs with the debug key and says so in the log, which
 keeps the build usable from a fork.
 
-The `android` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-builds the APK next to the tests, three ways:
+The build steps live in the reusable
+[`.github/workflows/android-apk.yml`](.github/workflows/android-apk.yml), which CI
+and the release flow both call. The APK is built three ways:
 
 - on every push to `main` and on every pull request, leaving
   `rss-pod-<version>-<commit>.apk` in that run's Artifacts, which is what puts a
   test build for any commit one download away;
-- on every published GitHub Release, attaching `rss-pod-<version>.apk` to it;
+- for a release tag, called by
+  [`release.yml`](.github/workflows/release.yml) after the image is pushed and the
+  release exists, attaching `rss-pod-<version>.apk` to it. The call has to be
+  explicit: the release is created with `GITHUB_TOKEN`, and GitHub does not start
+  workflow runs for events triggered by `GITHUB_TOKEN`, so a `release: published`
+  trigger never fires and the release would keep only the generated source
+  archives;
 - by hand (`workflow_dispatch`), which takes an optional URL override.
 
 `RSS_POD_WEB_URL` is a repository **variable**, not a secret: `vars` reads the
@@ -582,10 +589,10 @@ ghcr.io/synrise25/rss-pod
 
 Published tags include the full semantic version, the major/minor version, and
 `latest`. After the container publish succeeds, the workflow also creates a
-GitHub Release with automatically generated release notes. The same release then
-receives the Android APK from the `android` job in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml); see
-[Android app](#android-app).
+GitHub Release with automatically generated release notes. The same workflow then
+calls the reusable
+[`android-apk.yml`](.github/workflows/android-apk.yml) itself to build the APK and
+attach it to that release; see [Android app](#android-app).
 
 ## Configuration
 
