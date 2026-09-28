@@ -111,12 +111,18 @@ jobs:
           INPUT_URL: ${{ github.event.inputs.web_url }}
           VARIABLE_URL: ${{ vars.RSS_POD_WEB_URL }}
           SECRET_URL: ${{ secrets.RSS_POD_WEB_URL }}
+          ALL_VARIABLES: ${{ toJSON(vars) }}
           PLACEHOLDER_URL: https://pod.example.com
         run: |
           set -euo pipefail
 
-          # 三处都能配，按优先级取值，并且把每一处到底配没配打出来：地址配错位置时，
-          # 日志里直接能看出来是哪一种（最常见的是建到了 Secrets 页，而 vars 只读 Variables 页）。
+          # 先把 vars 里本次运行真正看得见的变量名打出来（只打名字，不打值）。
+          # 名字拼错、大小写不同、建到了 Secrets 或 Environments 页，这三种情况都会在这里现形。
+          variables="$(jq -r 'keys | join(", ")' <<< "$ALL_VARIABLES")"
+          if [ -z "$variables" ]; then variables="（一个都没有）"; fi
+          echo "本次运行可见的仓库变量名：$variables"
+
+          # 三处都能配，按优先级取值，并且把每一处到底配没配打出来。
           if [ -n "$VARIABLE_URL" ]; then
             echo "仓库变量 RSS_POD_WEB_URL：已设置"
           else
