@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">通勤博客</string>
+    <string name="channel_playback">播放</string>
+    <string name="channel_playback_description">正在播放剧集的播放控制</string>
+    <string name="action_play">播放</string>
+    <string name="action_pause">暂停</string>
+    <string name="action_previous">上一集</string>
+    <string name="action_next">下一集</string>
 </resources>
