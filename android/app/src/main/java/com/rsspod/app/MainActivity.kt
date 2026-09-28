@@ -93,12 +93,12 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(webView)
 
-        // The page is drawn behind the status bar on Android 15 and below it
-        // wherever the platform still insets the window, so the bar opens on the
-        // theme the device is in and the page corrects it from its first script
-        // on. Both the colour and the icons come from the page: a light page on
-        // a dark device would otherwise sit under a dark bar carrying light
-        // icons, which is where the bar becomes something to look at.
+        // The page is drawn behind the system bars on Android 15 and below them
+        // wherever the platform still insets the window, so the bars open on the
+        // theme the device is in and the page corrects them from its first
+        // script on. Both the colours and the icons come from the page: a light
+        // page on a dark device would otherwise sit under dark bars carrying
+        // light icons, which is where a bar becomes something to look at.
         applyPageTheme(isNightMode())
         PlayerBridge.onPageTheme = this::applyPageTheme
 
@@ -182,17 +182,30 @@ class MainActivity : AppCompatActivity() {
             Configuration.UI_MODE_NIGHT_YES
 
     /**
-     * The page draws its own top edge, so the bar carries the colour the page
-     * opens with instead of one of its own. Android 15 lets the page show
-     * through and ignores the colour; the platforms below it still paint one,
-     * and a bar that disagrees with the page under it is worse than no bar at
-     * all. The icons follow the page for the same reason: they sit on it.
+     * The page draws the edges it meets, so both bars carry the colour the page
+     * opens with instead of one of their own, and both sets of icons follow the
+     * page rather than the device it is running on.
+     *
+     * Android 15 lets the page show through the bars and ignores the colours;
+     * the platforms below it still paint them, and a bar that disagrees with the
+     * page under it is worse than no bar at all. The bottom carries one layer
+     * more: the scrim the system lays behind three-button navigation, whose
+     * colour follows the system's theme rather than the page's. It is turned off
+     * so the page is what reaches the bottom edge, which is also what the icons
+     * below are read against.
      */
     private fun applyPageTheme(dark: Boolean) {
         val pageColor = ContextCompat.getColor(this, if (dark) R.color.page_dark else R.color.page_light)
         @Suppress("DEPRECATION")
         window.statusBarColor = pageColor
-        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = !dark
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = pageColor
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !dark
+        controller.isAppearanceLightNavigationBars = !dark
     }
 
     private fun requestNotificationPermission() {

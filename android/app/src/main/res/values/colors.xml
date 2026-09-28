@@ -3,9 +3,9 @@
          page itself paints its first frame with. -->
     <color name="ic_launcher_background">#0B1420</color>
     <color name="window_background">#F4F9FF</color>
-    <!-- The two colours the page opens with, for the status bar on the platforms
+    <!-- The two colours the page opens with, for the system bars on the platforms
          that still paint one. They cannot come from the window background above:
-         that one follows the device, and the bar has to follow the page, which
+         that one follows the device, and the bars have to follow the page, which
          the device's own theme may disagree with. -->
     <color name="page_light">#F4F9FF</color>
     <color name="page_dark">#0B1420</color>
