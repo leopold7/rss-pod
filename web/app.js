@@ -3768,7 +3768,18 @@ function initPopupMenu() {
     if (event.key !== "Escape" || menu.hidden) return;
     closePopupMenu({ focusAnchor: true });
   });
-  document.addEventListener("scroll", () => closePopupMenu(), { capture: true, passive: true });
+  // The menu is anchored to controls that live inside scrolling rows, so a
+  // scroll behind it means it no longer sits where it was opened. A scroll
+  // inside it is the opposite: that is how a long category list is read, so the
+  // menu scrolls its own height without closing itself.
+  document.addEventListener(
+    "scroll",
+    (event) => {
+      if (event.target instanceof Element && event.target.closest("#popup-menu")) return;
+      closePopupMenu();
+    },
+    { capture: true, passive: true },
+  );
   window.addEventListener("resize", () => closePopupMenu());
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) closePopupMenu();

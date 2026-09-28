@@ -2437,6 +2437,9 @@ input:focus-visible {
      scrolls inside the menu instead of running past the bottom of the screen. */
   max-height: min(60vh, 420px);
   overflow-y: auto;
+  /* Reaching the end of the list must not hand the rest of the gesture to the
+     page behind: that scroll would move the menu away from its anchor. */
+  overscroll-behavior: contain;
   scrollbar-color: var(--line-strong) transparent;
   padding: 6px;
   border: 1px solid var(--glass-border);
