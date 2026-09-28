@@ -397,10 +397,15 @@ PKCS12 不区分 store 与 key 密码，所以 `ANDROID_KEYSTORE_PASSWORD` 与
 `ANDROID_KEY_PASSWORD` 填同一个值。没有配置签名 secrets 时工作流仍会构建，只是退回
 debug 签名并在日志里注明，这样 fork 也能正常出包。
 
-`.github/workflows/android.yml` 有两条出包路径：
+`.github/workflows/android.yml` 有三条出包路径：
 
+- 每次推送到分支都会构建，并把 `rss-pod-<版本>-<提交>.apk` 留在该次运行的 Artifacts 里，
+  于是任意一次提交的测试包都只差一次下载；
 - 每次 GitHub Release 发布后自动构建，并把 `rss-pod-<版本>.apk` 作为附件挂上去；
-- 手动触发（`workflow_dispatch`），可以临时覆盖地址，产物始终保留为 workflow artifact。
+- 手动触发（`workflow_dispatch`），可以临时覆盖地址，产物和推送一样保留为 workflow artifact。
+
+配置了签名 secrets 时，日常提交的包与正式包用同一把 key 签名，彼此可以覆盖安装；如果不想让
+release key 参与日常构建，把构建步骤面向非 release 运行改成 `assembleDebug` 即可。
 
 本地构建需要 JDK 17，以及 Android SDK platform 35 与 build-tools 35.0.0。仓库不提交
 Gradle wrapper，所以用 Gradle 8.13 或更新版本：
@@ -417,6 +422,7 @@ gradle -p android -Prsspod.baseUrl=https://pod.example.com assembleRelease
 - Android 13 及以上首次启动会申请通知权限；不给的话节目照常播放，只是通知栏没有卡片
 - 卡片上显示节目标题、来源名，封面用应用图标；控制项包含播放、暂停、上一集、下一集和拖动进度
 - 息屏播放依赖前台服务保住进程和其中的 WebView。部分厂商 ROM 仍会清理，需要把应用加入后台运行白名单
+- `versionCode` 取工作流运行号，所以 Android 不允许用旧包覆盖新包：回退到更早的版本前要先卸载
 
 ## Docker
 

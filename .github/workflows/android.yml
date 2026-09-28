@@ -1,6 +1,14 @@
 name: Android APK
 
+# 每次提交都会出现在 Actions 列表里，标题带上分支或 tag 才分得清哪次是哪个包。
+run-name: Android APK · ${{ github.ref_name }}
+
 on:
+  # 每次提交都出一份 APK 放到本次运行的 Artifacts 里。
+  # 这里只写 branches 不写 tags：按 GitHub 的规则，只定义 branches 时 tag 推送不会触发
+  # 本工作流，于是打 tag 只会经由下面的 release 事件构建一次，不会重复构建。
+  push:
+    branches: ["**"]
   # 官方 Release 建好后触发（同 tag 的 release.yml 先创建 Release，再发事件），
   # 因此不需要轮询等待 Release 出现，也不会和 release.yml 抢同一个 tag。
   release:
@@ -22,8 +30,10 @@ env:
   WEB_URL: ${{ github.event.inputs.web_url || vars.RSS_POD_WEB_URL || 'https://pod.example.com' }}
 
 concurrency:
+  # 同一分支上的多次提交排队执行而不是互相取消：既然每次提交都要留下自己的 APK，
+  # 就不能让后一次把前一次掐掉。想省时间的话把这里改成 true 即可。
   group: android-apk-${{ github.event.release.tag_name || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   apk:
@@ -46,15 +56,18 @@ jobs:
             echo "::warning::$WEB_URL 是明文 http：网页的本地缓存（Cache API）在非安全上下文下不生效"
           fi
 
-          # tag 触发的运行取 tag 作为版本名，手动触发取一次性的 dev 版本。
+          # Release 触发的运行取 tag 作为版本名；普通提交与手动触发取一次性的 dev 版本，
+          # 文件名再带上短 hash，下载后能直接对上是哪次提交。
           tag="${{ github.event.release.tag_name }}"
           if [ -z "$tag" ]; then
             version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+            apk="rss-pod-${version}-${GITHUB_SHA:0:7}.apk"
           else
             version="${tag#v}"
+            apk="rss-pod-${version}.apk"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "apk=rss-pod-${version}.apk" >> "$GITHUB_OUTPUT"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
 
           {
             echo "### Android APK"
@@ -63,6 +76,10 @@ jobs:
             echo "| --- | --- |"
             echo "| 页面地址 | \`${WEB_URL}\` |"
             echo "| 版本 | \`${version}\` |"
+            echo "| 提交 | \`${GITHUB_SHA:0:7}\`（\`${GITHUB_REF_NAME}\`） |"
+            echo "| 产物 | \`${apk}\` |"
+            echo ""
+            echo "APK 在本页底部的 Artifacts 区，名字就是上表里的产物名。"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up JDK

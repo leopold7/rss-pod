@@ -491,11 +491,19 @@ PKCS12 keeps no separate key password, so `ANDROID_KEYSTORE_PASSWORD` and
 workflow still builds, signs with the debug key and says so in the log, which
 keeps the build usable from a fork.
 
-`.github/workflows/android.yml` builds the APK two ways:
+`.github/workflows/android.yml` builds the APK three ways:
 
+- on every push to a branch, leaving `rss-pod-<version>-<commit>.apk` in that
+  run's Artifacts, which is what puts a test build for any commit one download
+  away;
 - on every published GitHub Release, attaching `rss-pod-<version>.apk` to it;
-- by hand (`workflow_dispatch`), which takes an optional URL override and always
-  leaves the APK as a workflow artifact.
+- by hand (`workflow_dispatch`), which takes an optional URL override and leaves
+  the APK as a workflow artifact just like a push does.
+
+When the signing secrets are present, a test build is signed with the same key as
+a release, so the two install over each other. Point the workflow's build step at
+`assembleDebug` for the non-release runs if the release key should stay out of
+everyday commits.
 
 To build it locally you need JDK 17 and Android SDK platform 35 with build-tools
 35.0.0. The repository carries no Gradle wrapper, so run Gradle 8.13 or newer:
@@ -518,6 +526,8 @@ Worth knowing:
 - playback behind the screen relies on a foreground service keeping the process
   and its WebView alive. Some manufacturer ROMs still kill it, and the app has to
   be allowed to run in the background there
+- `versionCode` is the workflow run number, so Android refuses to install an
+  older build over a newer one: uninstall first when going back to an earlier one
 
 ## Docker
 
