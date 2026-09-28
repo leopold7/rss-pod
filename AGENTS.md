@@ -29,5 +29,5 @@ documents relevant to the current task.
   configuration example, or release workflow.
 - Build the Android shell (`gradle -p android assembleRelease`, JDK 17 plus SDK
   platform 35 and build-tools 35.0.0) when changing `android/` or the web assets
-  it loads, or let the Android APK workflow do it.
+  it loads, or let the `android` job in the CI workflow do it.
 

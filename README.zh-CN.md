@@ -397,12 +397,18 @@ PKCS12 不区分 store 与 key 密码，所以 `ANDROID_KEYSTORE_PASSWORD` 与
 `ANDROID_KEY_PASSWORD` 填同一个值。没有配置签名 secrets 时工作流仍会构建，只是退回
 debug 签名并在日志里注明，这样 fork 也能正常出包。
 
-`.github/workflows/android.yml` 有三条出包路径：
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 里的 `android` job 与测试并行构建，
+有三条出包路径：
 
-- 每次推送到分支都会构建，并把 `rss-pod-<版本>-<提交>.apk` 留在该次运行的 Artifacts 里，
-  于是任意一次提交的测试包都只差一次下载；
+- 每次推送到 `main` 以及每个 pull request 都会构建，并把 `rss-pod-<版本>-<提交>.apk`
+  留在该次运行的 Artifacts 里，于是任意一次提交的测试包都只差一次下载；
 - 每次 GitHub Release 发布后自动构建，并把 `rss-pod-<版本>.apk` 作为附件挂上去；
-- 手动触发（`workflow_dispatch`），可以临时覆盖地址，产物和推送一样保留为 workflow artifact。
+- 手动触发（`workflow_dispatch`），可以临时覆盖地址。
+
+`RSS_POD_WEB_URL` 是仓库**变量**而不是 secret：`vars` 只读
+*Settings → Secrets and variables → Actions* 里的 Variables 页，别的都不读。为了不把地址配错
+地方，job 也接受把它配成 secret，并且每次都会打印实际取到了哪一处——配错位置时日志里会直接
+写明，而不是悄悄用占位地址打出一个装不上用途的包。
 
 配置了签名 secrets 时，日常提交的包与正式包用同一把 key 签名，彼此可以覆盖安装；如果不想让
 release key 参与日常构建，把构建步骤面向非 release 运行改成 `assembleDebug` 即可。
@@ -469,8 +475,8 @@ ghcr.io/synrise25/rss-pod
 
 发布标签包括完整语义版本、主次版本以及 `latest`。镜像成功发布后，工作流还会自动创建
 同名 GitHub Release，并生成版本说明；同一个 Release 上还会由
-[`.github/workflows/android.yml`](.github/workflows/android.yml) 附上 Android APK，
-详见 [Android 客户端](#android-客户端)。
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 里的 `android` job 附上
+Android APK，详见 [Android 客户端](#android-客户端)。
 
 ## 配置
 

@@ -491,17 +491,23 @@ PKCS12 keeps no separate key password, so `ANDROID_KEYSTORE_PASSWORD` and
 workflow still builds, signs with the debug key and says so in the log, which
 keeps the build usable from a fork.
 
-`.github/workflows/android.yml` builds the APK three ways:
+The `android` job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+builds the APK next to the tests, three ways:
 
-- on every push to a branch, leaving `rss-pod-<version>-<commit>.apk` in that
-  run's Artifacts, which is what puts a test build for any commit one download
-  away;
+- on every push to `main` and on every pull request, leaving
+  `rss-pod-<version>-<commit>.apk` in that run's Artifacts, which is what puts a
+  test build for any commit one download away;
 - on every published GitHub Release, attaching `rss-pod-<version>.apk` to it;
-- by hand (`workflow_dispatch`), which takes an optional URL override and leaves
-  the APK as a workflow artifact just like a push does.
+- by hand (`workflow_dispatch`), which takes an optional URL override.
+
+`RSS_POD_WEB_URL` is a repository **variable**, not a secret: `vars` reads the
+Variables page of *Settings → Secrets and variables → Actions* and nothing else.
+The job also accepts the value from a secret and always prints which of the two
+it found, so a value in the wrong place shows up in the log instead of quietly
+building against the placeholder address.
 
 When the signing secrets are present, a test build is signed with the same key as
-a release, so the two install over each other. Point the workflow's build step at
+a release, so the two install over each other. Point the build step at
 `assembleDebug` for the non-release runs if the release key should stay out of
 everyday commits.
 
@@ -577,8 +583,8 @@ ghcr.io/synrise25/rss-pod
 Published tags include the full semantic version, the major/minor version, and
 `latest`. After the container publish succeeds, the workflow also creates a
 GitHub Release with automatically generated release notes. The same release then
-receives the Android APK from
-[`.github/workflows/android.yml`](.github/workflows/android.yml); see
+receives the Android APK from the `android` job in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml); see
 [Android app](#android-app).
 
 ## Configuration
