@@ -10,3 +10,13 @@ push.bat
 release-tag.bat
 release-tag.py
 cmd/rss-pod/__debug_bin.exe
+
+# Android shell build output and signing material
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+*.jks
+*.keystore
+keystore.b64

@@ -30,6 +30,8 @@ Compared with the upstream project, this fork adds the following features:
 - **Article filter**: whitelist or blacklist the articles of a source by title
   regular expression
 - **CLI**: additional delete and retry commands
+- **Android app**: the player packaged as an APK, with a notification and lock
+  screen transport that keeps playing with the screen off
 
 
 ## Docker部署
@@ -50,10 +52,13 @@ docker pull ghcr.io/leopold7/rss-pod:latest
     <a href="#quick-start">Quick start</a>
     ·
     <a href="#container-images">Container images</a>
+    ·
+    <a href="#android-app">Android app</a>
   </p>
   <p>
     <a href="https://github.com/synrise25/rss-pod/actions/workflows/ci.yml"><img src="https://github.com/synrise25/rss-pod/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
     <a href="https://github.com/synrise25/rss-pod/pkgs/container/rss-pod"><img src="https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white" alt="GHCR container"></a>
+    <a href="https://github.com/synrise25/rss-pod/releases/latest"><img src="https://img.shields.io/badge/Android-APK-3DDC84?logo=android&logoColor=white" alt="Android APK"></a>
     <img src="https://img.shields.io/badge/Go-1.26.2-00ADD8?logo=go&logoColor=white" alt="Go 1.26.2">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT license"></a>
   </p>
@@ -452,6 +457,68 @@ The main commands are:
 | `worker` | Run selected River queues |
 | `run` | Run the HTTP service, scheduler, and every queue |
 
+## Android app
+
+`android/` holds a small WebView shell that turns a deployment into an
+installable app. It is a client rather than a copy: the page, its API and its
+audio all stay on the address you point it at, so the APK does not go stale when
+the service is updated. What the shell adds is what a browser tab on a phone
+cannot offer — a media session in the notification shade and on the lock screen,
+transport buttons on a headset, and playback that survives the screen going off.
+
+The address is injected at build time and is not stored in the repository:
+
+| Where | Name | Purpose |
+| --- | --- | --- |
+| Repository variable | `RSS_POD_WEB_URL` | The deployment the APK opens |
+| Repository secrets | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Release signing |
+
+Generate the signing key once, and keep it out of the repository: losing it means
+every installed user has to uninstall before they can upgrade again.
+
+```bash
+keytool -genkeypair -v -keystore rsspod-release.jks -alias rsspod \
+  -keyalg RSA -keysize 4096 -validity 10000 -storetype PKCS12 \
+  -storepass "$STORE_PASSWORD" -keypass "$STORE_PASSWORD" \
+  -dname "CN=rss-pod, OU=Mobile, O=rss-pod, C=CN" -noprompt
+
+# The secret holds the whole file as a single base64 line.
+base64 -w0 rsspod-release.jks > keystore.b64
+```
+
+PKCS12 keeps no separate key password, so `ANDROID_KEYSTORE_PASSWORD` and
+`ANDROID_KEY_PASSWORD` hold the same value. Without the signing secrets the
+workflow still builds, signs with the debug key and says so in the log, which
+keeps the build usable from a fork.
+
+`.github/workflows/android.yml` builds the APK two ways:
+
+- on every published GitHub Release, attaching `rss-pod-<version>.apk` to it;
+- by hand (`workflow_dispatch`), which takes an optional URL override and always
+  leaves the APK as a workflow artifact.
+
+To build it locally you need JDK 17 and Android SDK platform 35 with build-tools
+35.0.0. The repository carries no Gradle wrapper, so run Gradle 8.13 or newer:
+
+```bash
+gradle -p android -Prsspod.baseUrl=https://pod.example.com assembleRelease
+# android/app/build/outputs/apk/release/app-release.apk
+```
+
+Worth knowing:
+
+- the deployment has to be reachable from the phone, and `https://` is strongly
+  preferred: the page's local episode cache (the Cache API) only works in a
+  secure context
+- the app installs as `com.rsspod.app`, labelled *Commute Podcasts*
+- Android 13 and newer asks for the notification permission on first launch.
+  Without it the episode still plays, but the card in the shade is missing
+- that card carries the episode title, the feed name and the launcher icon as
+  artwork; the transport covers play, pause, previous, next and seek
+- playback behind the screen relies on a foreground service keeping the process
+  and its WebView alive. Some manufacturer ROMs still kill it, and the app has to
+  be allowed to run in the background there
+
 ## Docker
 
 Build the image locally:
@@ -499,7 +566,10 @@ ghcr.io/synrise25/rss-pod
 
 Published tags include the full semantic version, the major/minor version, and
 `latest`. After the container publish succeeds, the workflow also creates a
-GitHub Release with automatically generated release notes.
+GitHub Release with automatically generated release notes. The same release then
+receives the Android APK from
+[`.github/workflows/android.yml`](.github/workflows/android.yml); see
+[Android app](#android-app).
 
 ## Configuration
 

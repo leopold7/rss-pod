@@ -15,6 +15,7 @@ Thanks for helping improve rss-pod.
    go vet ./...
    go test ./...
    docker build -t rss-pod:dev .
+   gradle -p android assembleRelease   # when android/ or web/app.js changed
    ```
 
 Admin authentication and episode visibility integration tests run automatically

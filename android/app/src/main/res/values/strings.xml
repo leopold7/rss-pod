@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Commute Podcasts</string>
+    <string name="channel_playback">Playback</string>
+    <string name="channel_playback_description">Transport for the episode being played</string>
+    <string name="action_play">Play</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_previous">Previous episode</string>
+    <string name="action_next">Next episode</string>
+</resources>

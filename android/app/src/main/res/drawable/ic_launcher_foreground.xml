@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- The play mark the player itself uses, kept inside the adaptive safe zone. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M46,38 L46,70 L72,54 Z" />
+    <path
+        android:pathData="M79,40 A15,15 0 0 1 79,68"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="5" />
+</vector>

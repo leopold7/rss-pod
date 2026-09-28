@@ -4974,7 +4974,95 @@ async function fingerprintNotice(html) {
     .padStart(8, "0")}-${html.length}`;
 }
 
+// ---------------------------------------------------------------------------
+// Native shell
+// ---------------------------------------------------------------------------
+// Inside the Android shell the page is reached through window.RssPodNative,
+// which the shell injects before the first line of this module runs. A browser
+// has no such object, and every call below does nothing there.
+//
+// The media session above reaches the system only in a browser: a WebView
+// exposes the API but nothing listens to it. The shell therefore keeps a session
+// of its own, fed from exactly the places the media session is, so the two can
+// never fall out of step with the page.
+const SHELL_PROGRESS_INTERVAL_MS = 1000;
+let shellProgressSentAt = 0;
+
+function nativeShell() {
+  return window.RssPodNative || null;
+}
+
+function notifyShellState(episode) {
+  const shell = nativeShell();
+  if (!shell) return;
+  // A selection is handed over before the list it came from is read back, so the
+  // episode the caller has is trusted over the lookup.
+  const current = episode || findEpisode(state.currentEpisodeID);
+  if (!current) {
+    // A page with no episode has no card to keep.
+    shell.stopped();
+    return;
+  }
+  const audioDuration = elements.audio.duration;
+  shell.state(
+    JSON.stringify({
+      playing: !elements.audio.paused,
+      title: current.title || "",
+      artist: sourceName(current.sourceID),
+      duration:
+        Number.isFinite(audioDuration) && audioDuration > 0 ? audioDuration : current.durationSeconds || 0,
+      position: Number.isFinite(elements.audio.currentTime) ? elements.audio.currentTime : 0,
+      rate: elements.audio.playbackRate || 1,
+      // Both ends of the queue are read the way the transport reads them, so a
+      // button the shell offers is a button the queue can honour.
+      canPrevious: Boolean(queueNeighbour(-1)),
+      canNext: Boolean(queueNeighbour(1)),
+    }),
+  );
+}
+
+// timeupdate fires about four times a second; the shell only needs the position
+// often enough to keep its own timeline straight.
+function notifyShellProgress() {
+  const shell = nativeShell();
+  if (!shell || !state.currentEpisodeID) return;
+  const now = Date.now();
+  if (now - shellProgressSentAt < SHELL_PROGRESS_INTERVAL_MS) return;
+  shellProgressSentAt = now;
+  const audioDuration = elements.audio.duration;
+  shell.progress(
+    JSON.stringify({
+      duration: Number.isFinite(audioDuration) && audioDuration > 0 ? audioDuration : 0,
+      position: Number.isFinite(elements.audio.currentTime) ? elements.audio.currentTime : 0,
+      rate: elements.audio.playbackRate || 1,
+    }),
+  );
+}
+
+// The names are the Media Session action names above, so the notification, the
+// lock screen and the page all end up in the same functions.
+function handleShellCommand(name, payload = {}) {
+  switch (name) {
+    case "play":
+      return requestPlayback();
+    case "pause":
+      return pausePlayback();
+    case "next":
+      return moveInQueue(1);
+    case "previous":
+      return moveInQueue(-1);
+    case "seek":
+      return seekTo(Number(payload.position));
+    default:
+      return undefined;
+  }
+}
+
+// This module's functions are not on window, so the shell is given one door.
+window.RssPodPlayer = { command: handleShellCommand };
+
 function updateMediaSession(episode) {
+  notifyShellState(episode);
   const mediaSession = getMediaSession();
   if (!mediaSession) return;
 
@@ -5021,6 +5109,7 @@ function registerMediaSessionActions() {
 }
 
 function updateMediaSessionPlaybackState() {
+  notifyShellState(findEpisode(state.currentEpisodeID));
   const mediaSession = getMediaSession();
   if (!mediaSession || !("playbackState" in mediaSession)) return;
   try {
@@ -5031,6 +5120,7 @@ function updateMediaSessionPlaybackState() {
 }
 
 function updateMediaSessionPosition(fallbackDuration = null) {
+  notifyShellProgress();
   const mediaSession = getMediaSession();
   if (!mediaSession || typeof mediaSession.setPositionState !== "function") return;
 

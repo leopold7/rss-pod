@@ -14,6 +14,7 @@
 - **播放器**：标题跑马灯效果；支持抽屉隐藏
 - **文章过滤**：用白名单／黑名单按标题正则表达式筛选来源要处理的文章
 - **命令**：新增了一些删除和重试命令
+- **安卓客户端**：可打包成 APK，带通知栏与锁屏播放控制，息屏后仍能继续播放
 
 ## Docker Pull
 
@@ -33,10 +34,13 @@ docker pull ghcr.io/leopold7/rss-pod:latest
     <a href="#快速开始">快速开始</a>
     ·
     <a href="#容器镜像">容器镜像</a>
+    ·
+    <a href="#android-客户端">Android 客户端</a>
   </p>
   <p>
     <a href="https://github.com/synrise25/rss-pod/actions/workflows/ci.yml"><img src="https://github.com/synrise25/rss-pod/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
     <a href="https://github.com/synrise25/rss-pod/pkgs/container/rss-pod"><img src="https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white" alt="GHCR 容器镜像"></a>
+    <a href="https://github.com/synrise25/rss-pod/releases/latest"><img src="https://img.shields.io/badge/Android-APK-3DDC84?logo=android&logoColor=white" alt="Android APK"></a>
     <img src="https://img.shields.io/badge/Go-1.26.2-00ADD8?logo=go&logoColor=white" alt="Go 1.26.2">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT 许可证"></a>
   </p>
@@ -364,6 +368,56 @@ subscriptions:
 | `worker` | 只执行指定 River 队列 |
 | `run` | 同时运行 HTTP、调度器和全部队列 |
 
+## Android 客户端
+
+`android/` 是一个很小的 WebView 外壳，把已有的部署变成可以安装的应用。它是客户端而不是副本：
+页面、接口和音频都留在你指定的地址上，所以服务更新后 APK 不会过期。外壳补上的是手机浏览器
+标签页给不了的：通知栏与锁屏上的媒体卡片、耳机按键控制，以及息屏后继续播放。
+
+地址在构建时注入，不存放在仓库里：
+
+| 位置 | 名称 | 用途 |
+| --- | --- | --- |
+| 仓库变量 | `RSS_POD_WEB_URL` | APK 打开的部署地址 |
+| 仓库 Secrets | `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` | release 签名 |
+
+签名 key 只需生成一次，并且要留在仓库之外：一旦丢失，已安装的用户都必须先卸载才能再升级。
+
+```bash
+keytool -genkeypair -v -keystore rsspod-release.jks -alias rsspod \
+  -keyalg RSA -keysize 4096 -validity 10000 -storetype PKCS12 \
+  -storepass "$STORE_PASSWORD" -keypass "$STORE_PASSWORD" \
+  -dname "CN=rss-pod, OU=Mobile, O=rss-pod, C=CN" -noprompt
+
+# Secret 里放整个文件的单行 base64。
+base64 -w0 rsspod-release.jks > keystore.b64
+```
+
+PKCS12 不区分 store 与 key 密码，所以 `ANDROID_KEYSTORE_PASSWORD` 与
+`ANDROID_KEY_PASSWORD` 填同一个值。没有配置签名 secrets 时工作流仍会构建，只是退回
+debug 签名并在日志里注明，这样 fork 也能正常出包。
+
+`.github/workflows/android.yml` 有两条出包路径：
+
+- 每次 GitHub Release 发布后自动构建，并把 `rss-pod-<版本>.apk` 作为附件挂上去；
+- 手动触发（`workflow_dispatch`），可以临时覆盖地址，产物始终保留为 workflow artifact。
+
+本地构建需要 JDK 17，以及 Android SDK platform 35 与 build-tools 35.0.0。仓库不提交
+Gradle wrapper，所以用 Gradle 8.13 或更新版本：
+
+```bash
+gradle -p android -Prsspod.baseUrl=https://pod.example.com assembleRelease
+# android/app/build/outputs/apk/release/app-release.apk
+```
+
+几点说明：
+
+- 手机要能访问部署地址，且强烈建议用 `https://`：网页的本地音频缓存（Cache API）只在安全上下文下生效
+- 应用包名 `com.rsspod.app`，名称显示为 *Commute Podcasts*
+- Android 13 及以上首次启动会申请通知权限；不给的话节目照常播放，只是通知栏没有卡片
+- 卡片上显示节目标题、来源名，封面用应用图标；控制项包含播放、暂停、上一集、下一集和拖动进度
+- 息屏播放依赖前台服务保住进程和其中的 WebView。部分厂商 ROM 仍会清理，需要把应用加入后台运行白名单
+
 ## Docker
 
 本地构建：
@@ -408,7 +462,9 @@ ghcr.io/synrise25/rss-pod
 ```
 
 发布标签包括完整语义版本、主次版本以及 `latest`。镜像成功发布后，工作流还会自动创建
-同名 GitHub Release，并生成版本说明。
+同名 GitHub Release，并生成版本说明；同一个 Release 上还会由
+[`.github/workflows/android.yml`](.github/workflows/android.yml) 附上 Android APK，
+详见 [Android 客户端](#android-客户端)。
 
 ## 配置
 

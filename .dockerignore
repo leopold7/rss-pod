@@ -2,6 +2,7 @@
 .github
 .private-context
 .data
+android
 .env
 .DS_Store
 config.yaml
