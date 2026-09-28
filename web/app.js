@@ -1982,20 +1982,44 @@ async function selectEpisode(episode, { autoplay = false, resumeAt = 0 } = {}) {
 async function safePlay(episodeID = state.currentEpisodeID) {
   playingIntent = true;
   playRequestedAt = Date.now();
-  // A start a page nobody can see is not allowed to make sound, so a start made
-  // while the page is hidden asks for a muted one - which is always allowed to
-  // run - and the watch behind it takes the mute off once the audio really
-  // runs. The mark keeps that mute the player's own: a start the page can be
-  // seen for, or one that is refused outright, takes it back at once, so the
-  // element is never left silent without the player knowing why.
+  // A start a page nobody can see is not always refused: a browser that lets a
+  // queue keep playing with the screen off - the media session is live and the
+  // episode before this one was sounding - answers a plain play(), and the
+  // next episode simply plays. So a hidden start asks for the sound first, and
+  // only a refusal earns the muted start below, which is always allowed to
+  // run. The watch behind either start takes the mute off, or writes the wait
+  // down for the page to come back, the way it always has.
   // Audio that is already running is not a start: it is left alone, and any
   // mute left over from an earlier one is taken off it instead of being put on.
   const hiddenStart = document.hidden && elements.audio.paused;
-  if (hiddenStart && !mutedForBackgroundStart) {
+  if (hiddenStart) {
+    // A mute an earlier hidden start left behind would keep this attempt
+    // silent as well, so it is taken off before the sound is asked for.
+    if (mutedForBackgroundStart) clearBackgroundStart();
+    try {
+      await elements.audio.play();
+      logPlayback("info", "background start kept its sound", audioDiagnostics());
+      watchBackgroundStart(episodeID, "audible");
+      return;
+    } catch (error) {
+      // A request a newer source interrupted is expected on every retry, so it
+      // is recorded but never treated as a failure of its own.
+      if (error?.name === "AbortError") {
+        logPlayback("info", "play() aborted", { reason: "the source was requested again" });
+        return;
+      }
+      // Only the autoplay rule earns the muted start: a refusal for any other
+      // reason is the source's own failure, and a muted play() would meet it
+      // again on the same element.
+      if (error?.name !== "NotAllowedError") {
+        reportRefusedStart(error, episodeID);
+        return;
+      }
+      logPlayback("info", "background start refused, asking muted", audioDiagnostics());
+    }
     mutedForBackgroundStart = true;
     elements.audio.muted = true;
-    logPlayback("info", "background start", audioDiagnostics());
-  } else if (!hiddenStart && mutedForBackgroundStart) {
+  } else if (mutedForBackgroundStart) {
     clearBackgroundStart();
   }
   try {
@@ -2003,26 +2027,32 @@ async function safePlay(episodeID = state.currentEpisodeID) {
   } catch (error) {
     // A start that was refused never ran, so it does not keep the mute.
     if (hiddenStart) clearBackgroundStart();
-    if (!isDemoMode()) console.error("play audio", error);
     // A request a newer source interrupted is expected on every retry, so it is
     // recorded but never treated as a failure of its own.
     if (error?.name === "AbortError") {
       logPlayback("info", "play() aborted", { reason: "the source was requested again" });
       return;
     }
-    logPlayback("error", "play() refused", {
-      ...audioDiagnostics(),
-      reason: `${error?.name || "Error"}: ${error?.message || ""}`,
-    });
-    // A source the element has already refused has spent its attempt: the play()
-    // that is refused on top of it is the same failure reported twice, and
-    // counting it twice would cost half of the attempts the player has.
-    if (episodeID && episodeID === state.currentEpisodeID && !sourceWasRefused()) handlePlaybackFailure();
+    reportRefusedStart(error, episodeID);
     return;
   }
   // The start is watched from here: muted audio that really runs, and a mute
   // that comes off without the browser stopping the episode behind it.
   if (hiddenStart) watchBackgroundStart(episodeID, "muted");
+}
+
+// A refused play() is a failure like a stall: it is reported, and it spends
+// one of the attempts the episode has. A source the element has already
+// refused is the exception, because the play() refused on top of it is the
+// same failure reported twice, and counting it twice would cost half of the
+// attempts the player has.
+function reportRefusedStart(error, episodeID) {
+  if (!isDemoMode()) console.error("play audio", error);
+  logPlayback("error", "play() refused", {
+    ...audioDiagnostics(),
+    reason: `${error?.name || "Error"}: ${error?.message || ""}`,
+  });
+  if (episodeID && episodeID === state.currentEpisodeID && !sourceWasRefused()) handlePlaybackFailure();
 }
 
 // A listener who asks for audio again gets a full set of attempts back; the
@@ -2118,11 +2148,12 @@ let retryTimer = 0;
 // back, which would make every retry of a missing object a wasted request.
 const failedSourceURLs = new Set();
 let retryNonce = 0;
-// A start a page nobody can see is not allowed to make sound, and the episode
-// change and every retry are exactly that: a start. A muted start is always
-// allowed to run, so a hidden start asks for one, and the watch behind it takes
-// the mute off as soon as the audio really runs. The mark says the mute is the
-// player's own, so it is always taken back and never outlives its start.
+// The episode change and every retry with the screen off are starts a page
+// nobody can see, and some browsers refuse to let such a start make sound.
+// The sound is asked for first, and only a browser that refuses gets a muted
+// start instead, which is always allowed to run; the watch behind it takes
+// the mute off as soon as the audio really runs. The mark says the mute is
+// the player's own, so it is always taken back and never outlives its start.
 let mutedForBackgroundStart = false;
 // The window a hidden start is watched in, so a start the browser quietly
 // stopped is caught instead of being left as a dock that claims to play.
