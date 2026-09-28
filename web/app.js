@@ -3134,6 +3134,9 @@ function applyTheme() {
   document.documentElement.dataset.theme = theme;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = THEME_COLORS[theme];
+  // The shell paints the bar the page is drawn under, and a theme chosen here
+  // never reloads the page, so the change is handed over as it happens.
+  notifyShellTheme(theme);
   for (const button of elements.themeModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.themeMode === themePreference));
   }
@@ -4990,6 +4993,14 @@ let shellProgressSentAt = 0;
 
 function nativeShell() {
   return window.RssPodNative || null;
+}
+
+// The bar around the page belongs to the shell's window, so the page only says
+// which theme it settled on and the shell keeps the bar legible over it. A
+// shell built before this method existed has none, and a browser has no shell.
+function notifyShellTheme(theme) {
+  const shell = nativeShell();
+  if (shell && typeof shell.theme === "function") shell.theme(theme);
 }
 
 function notifyShellState(episode) {

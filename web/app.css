@@ -28,6 +28,12 @@
   --player-height: 186px;
   --section-gap: 8px;
   --content-padding: clamp(20px, 2.2vw, 36px);
+  /* How much of the top the system bar takes. The Android shell draws the page
+     behind its status bar and sets the value before the first paint, so the
+     header carries the bar as padding while its own background still reaches
+     the top edge. A browser leaves the value unset and keeps the header where
+     it has always been. */
+  --system-inset-top: var(--shell-inset-top, 0px);
   background: var(--page);
   color: var(--navy);
   font-synthesis: none;
@@ -236,7 +242,7 @@ input:focus-visible {
      paint above the filter bar and the episode list behind it. */
   position: relative;
   z-index: 20;
-  padding: 24px var(--content-padding) 0;
+  padding: calc(24px + var(--system-inset-top)) var(--content-padding) 0;
   border-bottom: 1px solid var(--line);
   background: rgb(255 255 255 / 70%);
   box-shadow: 0 10px 36px rgb(59 130 246 / 4%);
@@ -1685,7 +1691,7 @@ input:focus-visible {
   }
 
   .page-header {
-    padding-top: 18px;
+    padding-top: calc(18px + var(--system-inset-top));
   }
 
   .header-heading-row {
@@ -1750,7 +1756,7 @@ input:focus-visible {
   }
 
   .page-header {
-    padding-top: 14px;
+    padding-top: calc(14px + var(--system-inset-top));
   }
 
   .header-heading-row {
@@ -1814,7 +1820,7 @@ input:focus-visible {
   }
 
   .page-header {
-    padding: 16px var(--content-padding) 0;
+    padding: calc(16px + var(--system-inset-top)) var(--content-padding) 0;
   }
 
   .header-heading-row {

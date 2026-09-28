@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,6 +20,10 @@ import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import kotlin.math.roundToInt
 
 /**
  * The player runs as the page a deployment already serves: its markup, its API
@@ -36,8 +41,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // The screen stays on while the app is in front; listening behind the
-        // screen is PlaybackService's job.
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // screen is PlaybackService's job. The other flag lets the bar take a
+        // colour of its own on the platforms that still paint one.
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS,
+        )
 
         webView = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -67,9 +76,32 @@ class MainActivity : AppCompatActivity() {
             addJavascriptInterface(PlayerBridge, "RssPodNative")
         }
 
+        // The page cannot measure the bar floating over it, so the height the
+        // window gives this view is passed on: the header adds it to its own
+        // padding. The page reads the value again before each of its loads, so
+        // a navigation does not wait for the window to move.
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { _, insets ->
+            // The page lays out in the density-independent pixels below, and the
+            // inset arrives in device pixels.
+            val density = resources.displayMetrics.density
+            val barHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top / density
+            PlayerBridge.setInsetTop(barHeight.roundToInt())
+            insets
+        }
+
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
 
         setContentView(webView)
+
+        // The page is drawn behind the status bar on Android 15 and below it
+        // wherever the platform still insets the window, so the bar opens on the
+        // theme the device is in and the page corrects it from its first script
+        // on. Both the colour and the icons come from the page: a light page on
+        // a dark device would otherwise sit under a dark bar carrying light
+        // icons, which is where the bar becomes something to look at.
+        applyPageTheme(isNightMode())
+        PlayerBridge.onPageTheme = this::applyPageTheme
+
         if (savedInstanceState == null) {
             webView.loadUrl(BuildConfig.BASE_URL)
         } else {
@@ -145,6 +177,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isNightMode(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    /**
+     * The page draws its own top edge, so the bar carries the colour the page
+     * opens with instead of one of its own. Android 15 lets the page show
+     * through and ignores the colour; the platforms below it still paint one,
+     * and a bar that disagrees with the page under it is worse than no bar at
+     * all. The icons follow the page for the same reason: they sit on it.
+     */
+    private fun applyPageTheme(dark: Boolean) {
+        val pageColor = ContextCompat.getColor(this, if (dark) R.color.page_dark else R.color.page_light)
+        @Suppress("DEPRECATION")
+        window.statusBarColor = pageColor
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = !dark
+    }
+
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
@@ -167,6 +217,9 @@ class MainActivity : AppCompatActivity() {
     // onPause is deliberately not forwarded to the WebView: pausing it freezes
     // the page, and the audio the page is playing would stop with it.
     override fun onDestroy() {
+        // The window goes with this activity, so the page has nothing left to
+        // reach it through.
+        PlayerBridge.onPageTheme = null
         PlayerBridge.detach(webView)
         webView.destroy()
         super.onDestroy()
