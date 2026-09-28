@@ -1015,6 +1015,63 @@ input:focus-visible {
   scrollbar-color: var(--line-strong) transparent;
 }
 
+/* The rows follow the pull that opens above them. The stretch travels in a
+   custom property the region holds, so the pages, the pill and the release are
+   all written from one value; the class takes the transition away while a
+   finger is on the list, because a stretch that follows a finger must not lag
+   behind it. */
+.episode-rows {
+  transform: translateY(var(--pull-shift, 0px));
+  transition: transform 220ms ease;
+}
+
+.episode-region.is-pulling .episode-rows,
+.episode-region.is-pulling .pull-refresh {
+  transition: none;
+}
+
+/* The pill a pull opens out of the top of the list. It sits at the middle of
+   the gap the stretch leaves, which is empty list rather than a row, and fades
+   in with the pull. */
+.pull-refresh {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-solid);
+  color: var(--muted);
+  box-shadow: 0 8px 20px rgb(59 130 246 / 16%);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: var(--pull-opacity, 0);
+  transform: translate(-50%, calc(var(--section-gap) + var(--pull-shift, 0px) / 2 - 50%));
+  transition: transform 220ms ease, opacity 160ms ease;
+}
+
+/* The ring turns with the pull and spins on its own once the refresh runs. */
+.pull-refresh-spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  transform: rotate(calc(var(--pull-progress, 0) * 270deg));
+}
+
+.pull-refresh.is-busy .pull-refresh-spinner {
+  animation: download-spin 900ms linear infinite;
+}
+
 /* Without the vendored slider the pages would stack on top of each other, so
    the fallback keeps them in one scrolling column. */
 .episode-slider.is-static .swiper-wrapper {
@@ -2197,7 +2254,8 @@ input:focus-visible {
   }
 
   .episode-play-button[data-state="processing"]::after,
-  .episode-play-button[data-state="processing"] img {
+  .episode-play-button[data-state="processing"] img,
+  .pull-refresh-spinner {
     animation: none !important;
   }
 }

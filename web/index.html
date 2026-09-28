@@ -423,6 +423,14 @@
 
       <section id="episode-region" class="episode-region" aria-label="Podcast episodes">
         <p id="status-message" class="status-message" role="status" aria-live="polite">Loading podcasts…</p>
+        <!-- A pull at the top of the list asks the window again. The pill rides
+             into the gap the pull opens, so it is decoration rather than a
+             control: a reader reaches the same refresh by coming back to the
+             page. -->
+        <div id="pull-refresh" class="pull-refresh" aria-hidden="true">
+          <span class="pull-refresh-spinner"></span>
+          <span id="pull-refresh-label" class="pull-refresh-label"></span>
+        </div>
         <!-- One page per header control: a swipe walks the feeds of a day before
              it hands over to the next day. Swiper moves the pages. -->
         <div id="episode-slider" class="episode-slider swiper">

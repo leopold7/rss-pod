@@ -48,6 +48,19 @@ const BOOKMARK_SLOT = "bookmark";
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP = 8;
 const LONG_PRESS_CLICK_GUARD_MS = 700;
+// A pull at the top of the list asks the window again. The list follows the
+// finger at a fraction of its travel, the refresh runs once the stretch passes a
+// distance a deliberate pull reaches and a stray drag does not, and the stretch
+// stops travelling at the second constant rather than keep following a finger.
+const PULL_REFRESH_ARM_PX = 56;
+const PULL_REFRESH_MAX_PX = 76;
+// What is left of the stretch while the page is asking: the pill stays in view
+// instead of falling back the moment the finger lifts.
+const PULL_REFRESH_REST_PX = 44;
+const PULL_REFRESH_RESISTANCE = 0.55;
+// How far a finger has to travel, and how much further down than sideways,
+// before the gesture belongs to the pull rather than to the slider or the list.
+const PULL_REFRESH_CLAIM_PX = 10;
 const LISTENED_LIMIT = 500;
 const LISTEN_LATER_LIMIT = 200;
 const BOOKMARK_LIMIT = 200;
@@ -173,6 +186,9 @@ const copy = {
     listenLater: "Listen later",
     sharedDropdown: "Choose all episodes, Listen later or Bookmarks",
     emptyLater: "Nothing saved for later yet",
+    pullRefreshPull: "Pull to refresh",
+    pullRefreshRelease: "Release to refresh",
+    pullRefreshBusy: "Refreshing…",
     personalSettingLabel: "Personalization",
     laterGroupLabel: "Listen later",
     otherGroupLabel: "Other",
@@ -316,6 +332,9 @@ const copy = {
     listenLater: "稍后在听",
     sharedDropdown: "在全部、稍后在听与收藏之间切换",
     emptyLater: "还没有稍后在听的内容",
+    pullRefreshPull: "下拉刷新",
+    pullRefreshRelease: "松开刷新",
+    pullRefreshBusy: "正在刷新…",
     personalSettingLabel: "个性化设置",
     laterGroupLabel: "稍后在听",
     otherGroupLabel: "其他",
@@ -510,6 +529,8 @@ const elements = {
   episodeSlider: document.querySelector("#episode-slider"),
   episodeWrapper: document.querySelector("#episode-slider .swiper-wrapper"),
   statusMessage: document.querySelector("#status-message"),
+  pullRefresh: document.querySelector("#pull-refresh"),
+  pullRefreshLabel: document.querySelector("#pull-refresh-label"),
   rowTemplate: document.querySelector("#episode-row-template"),
   audio: document.querySelector("#audio"),
   playToggle: document.querySelector("#play-toggle"),
@@ -613,6 +634,10 @@ const state = {
 // Swiper owns the sideways paging of the episode list; the pages themselves are
 // rendered from the header controls.
 const slider = initEpisodeSlider();
+
+// The list scrolls inside its own pages rather than with the document, so a pull
+// at its top is not something the browser offers: the pages carry the gesture.
+initPullToRefresh(elements.episodeRegion);
 
 renderCategorySetting();
 renderFirstViewSetting();
@@ -855,7 +880,9 @@ async function refreshEpisodes() {
   window.clearTimeout(refreshTimer);
   refreshTimer = 0;
   try {
-    const payload = await fetchPlayerData();
+    // The demo page has no backend to ask, so its window is built the same way
+    // the first one is.
+    const payload = await (isDemoMode() ? demoPayload() : fetchPlayerData());
     if (payload === null) return;
     applyPayload(payload);
     renderAll();
@@ -1428,6 +1455,138 @@ function initEpisodeSlider() {
   });
   instance.on("slideChange", syncActiveSlot);
   return instance;
+}
+
+// ---- Pull to refresh ----
+
+// The list scrolls inside its own pages instead of with the document, so a pull
+// at its top is not something the browser offers and the pages carry the
+// gesture. Swiper drags that very same element sideways, so a gesture only
+// becomes a pull once it is clearly vertical and further down than across: that
+// leaves a sideways drag to the slider, an upward one to the list, and a held
+// press to the row actions.
+function initPullToRefresh(region) {
+  if (!region || !elements.pullRefresh) return;
+  region.addEventListener("touchstart", onPullStart, { passive: true });
+  // A stretch has nothing behind it to scroll, so once a pull owns a gesture the
+  // page tells the browser the gesture is accounted for. Nothing is cancelled
+  // before that, or the list could not be scrolled down.
+  region.addEventListener("touchmove", onPullMove, { passive: false });
+  region.addEventListener("touchend", onPullEnd);
+  region.addEventListener("touchcancel", onPullEnd);
+}
+
+// The pull a finger owns at the moment, or null between gestures, and whether
+// the page is already asking for the window.
+let pullGesture = null;
+let pullRefreshing = false;
+
+function onPullStart(event) {
+  pullGesture = null;
+  if (event.touches.length !== 1) return;
+  const slide = pullSlide(event);
+  // A page that is already scrolled has nothing to open above it, and a pull
+  // there would fight the scrolling the finger asked for.
+  if (!slide || slide.scrollTop > 0) return;
+  const touch = event.touches[0];
+  pullGesture = {
+    slide,
+    startX: touch.clientX,
+    startY: touch.clientY,
+    shift: 0,
+    claimed: false,
+    armed: false,
+  };
+}
+
+// The page a pull belongs to: the one the finger landed on, or the one in front
+// when it landed on the empty state, which lies over the list rather than in it.
+function pullSlide(event) {
+  return event.target.closest?.(".episode-slide") || activeSlide() || elements.episodeWrapper;
+}
+
+function onPullMove(event) {
+  const gesture = pullGesture;
+  if (!gesture || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  const across = touch.clientX - gesture.startX;
+  const down = touch.clientY - gesture.startY;
+  if (!gesture.claimed) {
+    // Until one axis is clearly ahead of the other the gesture belongs to no
+    // one, which is what lets a sideways drag reach the slider untouched.
+    if (Math.abs(across) >= Math.abs(down)) {
+      if (Math.abs(across) > PULL_REFRESH_CLAIM_PX) pullGesture = null;
+      return;
+    }
+    if (down < PULL_REFRESH_CLAIM_PX) return;
+    if (gesture.slide.scrollTop > 0) {
+      pullGesture = null;
+      return;
+    }
+    gesture.claimed = true;
+    elements.episodeRegion.classList.add("is-pulling");
+  }
+  if (event.cancelable) event.preventDefault();
+  // The stretch stops at a distance rather than follow a finger that keeps
+  // going, and it never travels back up above the top of the list.
+  gesture.shift = Math.max(0, Math.min(down * PULL_REFRESH_RESISTANCE, PULL_REFRESH_MAX_PX));
+  gesture.armed = gesture.shift >= PULL_REFRESH_ARM_PX;
+  applyPullStretch(gesture.shift);
+  setPullLabel(gesture.armed ? copy.pullRefreshRelease : copy.pullRefreshPull);
+}
+
+function onPullEnd() {
+  const gesture = pullGesture;
+  pullGesture = null;
+  if (!gesture || !gesture.claimed) return;
+  // Letting go hands the stretch back to the transition, so it settles rather
+  // than snapping back.
+  elements.episodeRegion.classList.remove("is-pulling");
+  // The click a pull leaves behind belongs to the pull, not to the row the
+  // finger happened to be over when it was lifted.
+  suppressEpisodeClick();
+  if (gesture.armed && !pullRefreshing) {
+    runPullRefresh();
+    return;
+  }
+  // A pull that stopped short, and one made while the page was already asking,
+  // both fall back to where the list was.
+  applyPullStretch(pullRefreshing ? PULL_REFRESH_REST_PX : 0);
+  setPullLabel(pullRefreshing ? copy.pullRefreshBusy : copy.pullRefreshPull);
+}
+
+// The whole stretch travels in one custom property on the region: the pages read
+// it for their rows, and the pill above them reads it for where it sits and how
+// far in it has faded.
+function applyPullStretch(shift) {
+  const region = elements.episodeRegion;
+  region.style.setProperty("--pull-shift", `${shift.toFixed(1)}px`);
+  region.style.setProperty("--pull-progress", Math.min(shift / PULL_REFRESH_ARM_PX, 1).toFixed(3));
+  region.style.setProperty("--pull-opacity", Math.min(shift / (PULL_REFRESH_ARM_PX * 0.6), 1).toFixed(3));
+}
+
+function setPullLabel(label) {
+  elements.pullRefreshLabel.textContent = label;
+}
+
+// A pull asks for the same window the page asks for when it is opened again,
+// which is more than a poll reads: a feed added elsewhere, a day that gained a
+// row, and a row that changed all arrive with it.
+async function runPullRefresh() {
+  pullRefreshing = true;
+  elements.pullRefresh.classList.add("is-busy");
+  setPullLabel(copy.pullRefreshBusy);
+  // What is left of the stretch while the page asks, so the pill stays readable
+  // instead of leaving with the finger.
+  applyPullStretch(PULL_REFRESH_REST_PX);
+  try {
+    await refreshEpisodes();
+  } finally {
+    pullRefreshing = false;
+    elements.pullRefresh.classList.remove("is-busy");
+    applyPullStretch(0);
+    setPullLabel(copy.pullRefreshPull);
+  }
 }
 
 // Everything that follows the page in front: the highlighted control, the empty
@@ -2856,6 +3015,7 @@ function applyLocale() {
   elements.categoryMenuToggle.setAttribute("aria-label", copy.categoryMenuLabel);
   elements.categoryMenuToggle.title = copy.categoryMenuLabel;
   elements.episodeRegion.setAttribute("aria-label", copy.episodeRegionLabel);
+  elements.pullRefreshLabel.textContent = copy.pullRefreshPull;
   elements.playerDock.setAttribute("aria-label", copy.playerLabel);
   elements.playToggle.setAttribute("aria-label", copy.play);
   elements.previousButton.setAttribute("aria-label", copy.previous);
