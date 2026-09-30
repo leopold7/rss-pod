@@ -21,10 +21,11 @@ object PlayerBridge {
     private var view: WeakReference<WebView>? = null
 
     /**
-     * The bar the system draws over the page, in the pixels the page lays out
+     * The bars the system draws over the page, in the pixels the page lays out
      * in rather than the device's own.
      */
     private var statusBarInset = 0
+    private var navigationBarInset = 0
 
     /**
      * Where the page's theme has to land. The bar the page is drawn under
@@ -60,27 +61,32 @@ object PlayerBridge {
     }
 
     /**
-     * Read by the page before its first paint: the header cannot ask the window
-     * over it how much of the top the system bar takes, so the activity measures
-     * it and it is kept here for the page to read on every load.
+     * Read by the page before its first paint: it cannot ask the window over it
+     * how much of an edge the system bars take, so the activity measures them
+     * and they are kept here for the page to read on every load.
      */
     @JavascriptInterface
     fun insetTop(): Int = statusBarInset
 
+    @JavascriptInterface
+    fun insetBottom(): Int = navigationBarInset
+
     /**
-     * The same measurement, arriving from the window, in the page's pixels. The
+     * The same measurements, arriving from the window, in the page's pixels. The
      * page is told as well: it is drawn already when the window moves, so
-     * waiting for its next load would leave the header under the bar until then.
+     * waiting for its next load would leave it under a bar until then.
      */
-    fun setInsetTop(pixels: Int) {
-        if (pixels == statusBarInset) return
-        statusBarInset = pixels
+    fun setInsets(top: Int, bottom: Int) {
+        if (top == statusBarInset && bottom == navigationBarInset) return
+        statusBarInset = top
+        navigationBarInset = bottom
         onMain {
             val webView = view?.get() ?: return@onMain
-            // A plain expression: the window can move more than once in a page's
+            // Plain statements: the window can move more than once in a page's
             // life, and a declaration would be re-declared the second time.
-            val script = "document.documentElement && " +
-                "document.documentElement.style.setProperty('--shell-inset-top', '${pixels}px')"
+            val root = "document.documentElement"
+            val script = "$root && $root.style.setProperty('--shell-inset-top', '${top}px');" +
+                "$root && $root.style.setProperty('--shell-inset-bottom', '${bottom}px')"
             webView.evaluateJavascript(script, null)
         }
     }

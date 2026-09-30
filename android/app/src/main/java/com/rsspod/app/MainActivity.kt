@@ -76,16 +76,21 @@ class MainActivity : AppCompatActivity() {
             addJavascriptInterface(PlayerBridge, "RssPodNative")
         }
 
-        // The page cannot measure the bar floating over it, so the height the
-        // window gives this view is passed on: the header adds it to its own
-        // padding. The page reads the value again before each of its loads, so
-        // a navigation does not wait for the window to move.
+        // The page cannot measure the bars floating over it, so the space the
+        // window gives them up is passed on: the header carries the top one as
+        // padding and the player keeps clear of the bottom one. The page reads
+        // both again before each of its loads, so a navigation does not wait for
+        // the window to move.
         ViewCompat.setOnApplyWindowInsetsListener(webView) { _, insets ->
             // The page lays out in the density-independent pixels below, and the
-            // inset arrives in device pixels.
+            // insets arrive in device pixels.
             val density = resources.displayMetrics.density
-            val barHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top / density
-            PlayerBridge.setInsetTop(barHeight.roundToInt())
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val navigationBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            PlayerBridge.setInsets(
+                (statusBars.top / density).roundToInt(),
+                (navigationBars.bottom / density).roundToInt(),
+            )
             insets
         }
 

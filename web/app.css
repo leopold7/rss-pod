@@ -28,12 +28,14 @@
   --player-height: 186px;
   --section-gap: 8px;
   --content-padding: clamp(20px, 2.2vw, 36px);
-  /* How much of the top the system bar takes. The Android shell draws the page
-     behind its status bar and sets the value before the first paint, so the
-     header carries the bar as padding while its own background still reaches
-     the top edge. A browser leaves the value unset and keeps the header where
-     it has always been. */
+  /* How much of an edge the system bars take. The Android shell draws the page
+     behind both of them and sets its measurements before the first paint, so
+     the header carries the top one as padding while its own background still
+     reaches the top edge, and the player keeps its height clear of the bottom
+     one. A browser leaves the shell's values unset and keeps what it had: the
+     header at the top edge, the player clear of the home indicator. */
   --system-inset-top: var(--shell-inset-top, 0px);
+  --system-inset-bottom: max(env(safe-area-inset-bottom, 0px), var(--shell-inset-bottom, 0px));
   background: var(--page);
   color: var(--navy);
   font-synthesis: none;
@@ -1872,7 +1874,7 @@ input:focus-visible {
 @media (max-width: 700px) {
   :root {
     --content-padding: 14px;
-    --player-height: calc(174px + env(safe-area-inset-bottom));
+    --player-height: calc(174px + var(--system-inset-bottom));
     --section-gap: 4px;
   }
 
@@ -2112,13 +2114,13 @@ input:focus-visible {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 6px 8px;
     width: calc(100% - 16px);
-    margin: var(--section-gap) 8px calc(8px + env(safe-area-inset-bottom));
+    margin: var(--section-gap) 8px calc(8px + var(--system-inset-bottom));
     padding: 8px 10px;
     border-radius: 16px;
   }
 
   :root[data-player-drawer="collapsed"] {
-    --player-height: calc(76px + env(safe-area-inset-bottom));
+    --player-height: calc(76px + var(--system-inset-bottom));
   }
 
   .player-drawer-toggle {

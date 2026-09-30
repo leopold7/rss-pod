@@ -25,13 +25,15 @@
         document.documentElement.dataset.theme = dark ? "dark" : "light";
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.content = dark ? "#0b1420" : "#f4f9ff";
-        // The Android shell draws the page behind its status bar, so the header
-        // has to be told how tall that bar is and the bar which theme it is
-        // floating over. Both are read here, before the first paint, and both
-        // calls do nothing in a browser, which has no bridge.
+        // The Android shell draws the page behind both of its system bars, so
+        // the header and the player have to be told what each bar takes and the
+        // bars which theme they are floating over. All of it is read here,
+        // before the first paint, and it does nothing in a browser, which has no
+        // bridge; a shell built before these methods has none of them either.
         const shell = window.RssPodNative;
-        if (shell && typeof shell.insetTop === "function" && typeof shell.theme === "function") {
+        if (shell && typeof shell.insetTop === "function") {
           document.documentElement.style.setProperty("--shell-inset-top", `${shell.insetTop()}px`);
+          document.documentElement.style.setProperty("--shell-inset-bottom", `${shell.insetBottom()}px`);
           shell.theme(dark ? "dark" : "light");
         }
         // The drawer drives the shell rows instead of a palette variable.
