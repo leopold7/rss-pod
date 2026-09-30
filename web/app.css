@@ -1895,10 +1895,12 @@ input:focus-visible {
     font-size: clamp(25px, 7.4vw, 30px);
   }
 
-  /* On phones the header keeps only the settings and theme buttons: the
-     language switcher and the repository link move into the settings panel. */
+  /* On phones the header keeps only the settings button: the language
+     switcher, the repository link and the theme switch all move into the
+     settings panel, which drives the same stored theme choice. */
   #language-switcher,
-  #github-link {
+  #github-link,
+  #theme-toggle {
     display: none;
   }
 

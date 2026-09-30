@@ -253,8 +253,9 @@ The player follows the device color scheme by default. A switch between the
 language switcher and the repository link cycles through following the device,
 light and dark, and the choice is stored in the browser for the current site, so
 clearing site data or using another browser returns to the device default. The
-resolved theme is applied before the first paint, and the switch is hidden when
-the deployment sets:
+resolved theme is applied before the first paint. A phone-width header drops the
+switch and leaves the same choice in the settings panel. The switch is hidden
+entirely when the deployment sets:
 
 ```yaml
 runtime:
