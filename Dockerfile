@@ -7,6 +7,9 @@ ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod go.sum ./
+# The local replace target of go.mod must exist before the module graph is
+# resolved, so copy it ahead of `go mod download` to keep that layer cached.
+COPY third_party ./third_party
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY . .

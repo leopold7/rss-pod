@@ -48,3 +48,9 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
 )
+
+// Microsoft migrated Edge Read Aloud TTS to the v2 endpoint and the legacy v1
+// host now rejects WebSocket handshakes with 403 in an increasing number of
+// regions. Upstream has no released fix, so third_party/edge-tts is a local
+// copy of v1.0.1 patched to use the v2 endpoint (see its constants.go).
+replace github.com/foresturquhart/edge-tts => ./third_party/edge-tts

@@ -522,6 +522,12 @@ content:
 生成的 Document 数量，不限制这个 Document 内的回复数。送入 LLM 的资料达到应用层
 120,000 字符上限时会截断，并输出一条不含正文和 URL 的 warning 日志。
 
+Edge TTS 使用微软 v2 Read Aloud 端点。对应的依赖是放在
+[`third_party/edge-tts`](third_party/edge-tts) 的 `github.com/foresturquhart/edge-tts`
+补丁副本（LGPL-3.0，改动在该目录内公开），因为上游已发布版本仍在使用旧 v1 端点，而微软已
+在越来越多区域以 HTTP 403 拒绝它。WebSocket 握手被拒时会按退避重试，之后才判定本集失败。
+仅在服务本身不可达时才需要配置 `EDGE_TTS_PROXY`；未配置时代理不会被使用。
+
 ## 安全边界
 
 公共 listener 提供播放器及其 `/api/v1/player/*` 路由。这些路由只读取数据，

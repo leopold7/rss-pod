@@ -639,6 +639,15 @@ Documents produced by derived RSS; it does not limit replies inside this
 Document. Source material is truncated at rss-pod's 120,000-character LLM
 prompt limit, with a warning log that excludes content and URLs.
 
+Edge TTS speaks to Microsoft's v2 Read Aloud endpoint. The dependency is a
+patched copy of `github.com/foresturquhart/edge-tts` kept in
+[`third_party/edge-tts`](third_party/edge-tts) (LGPL-3.0; the patch is public
+there), because the released upstream version still uses the legacy v1 endpoint
+that Microsoft rejects with HTTP 403 in an increasing number of regions.
+Rejected WebSocket handshakes are retried with backoff before an episode attempt
+fails. Set `EDGE_TTS_PROXY` only when the service itself is unreachable:
+requests never go through a proxy unless it is configured.
+
 ## Security model
 
 The public listener serves the player and its `/api/v1/player/*` routes. Those

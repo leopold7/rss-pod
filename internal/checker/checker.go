@@ -592,11 +592,14 @@ func checkEdgeTTSVoice(ctx context.Context, profileName, serviceName string, ser
 		return fmt.Errorf("profile %s: %w", profileName, err)
 	}
 	audioBytes := 0
-	if err := communicate.Stream(ctx, func(chunk edgetts.TTSChunk) error {
-		if chunk.Type == edgetts.ChunkTypeAudio {
-			audioBytes += len(chunk.Data)
-		}
-		return nil
+	if err := ttspkg.RetryEdgeHandshake(ctx, func() error {
+		audioBytes = 0
+		return communicate.Stream(ctx, func(chunk edgetts.TTSChunk) error {
+			if chunk.Type == edgetts.ChunkTypeAudio {
+				audioBytes += len(chunk.Data)
+			}
+			return nil
+		})
 	}); err != nil {
 		return fmt.Errorf("profile %s synthesize: %w", profileName, err)
 	}

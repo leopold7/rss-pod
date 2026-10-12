@@ -146,6 +146,12 @@ services:
 
   tts:
     edge:
+      # Edge TTS speaks to Microsoft's v2 Read Aloud endpoint. Handshake
+      # rejections are retried with backoff before an episode attempt fails.
+      # Edge TTS 使用微软 v2 Read Aloud 端点；握手被拒时会按退避重试，之后才判定本集失败。
+      # A proxy is only needed where the service itself is unreachable; traffic
+      # never goes through it unless it is set here.
+      # 仅在服务本身不可达时才需要代理；未在此处配置时代理不会被使用。
       proxy: env://EDGE_TTS_PROXY
       connect_timeout: 20s
       receive_timeout: 120s

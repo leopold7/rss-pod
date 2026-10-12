@@ -293,12 +293,15 @@ func synthesizeEdge(ctx context.Context, service config.TTSService, dialogue con
 		return nil, permanent("invalid Edge TTS request: %v", err)
 	}
 	var audio bytes.Buffer
-	if err := communicate.Stream(ctx, func(chunk edgetts.TTSChunk) error {
-		if chunk.Type == edgetts.ChunkTypeAudio {
-			_, err := audio.Write(chunk.Data)
-			return err
-		}
-		return nil
+	if err := ttspkg.RetryEdgeHandshake(ctx, func() error {
+		audio.Reset()
+		return communicate.Stream(ctx, func(chunk edgetts.TTSChunk) error {
+			if chunk.Type == edgetts.ChunkTypeAudio {
+				_, err := audio.Write(chunk.Data)
+				return err
+			}
+			return nil
+		})
 	}); err != nil {
 		return nil, fmt.Errorf("Edge TTS stream: %w", err)
 	}
