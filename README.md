@@ -34,7 +34,7 @@ Compared with the upstream project, this fork adds the following features:
   screen transport that keeps playing with the screen off
 
 
-## Docker部署
+## Docker Pull
 
 ```shell
 docker pull ghcr.io/leopold7/rss-pod:latest
