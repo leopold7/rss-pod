@@ -13,7 +13,9 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -34,11 +36,22 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
 
-    private val appHost: String by lazy { Uri.parse(BuildConfig.BASE_URL).host.orEmpty() }
+    /** The page this launch opens: the build's own unless one was chosen. */
+    private lateinit var homeUrl: String
+
+    private val appHost: String by lazy { Uri.parse(homeUrl).host.orEmpty() }
+
+    /** Set once the shell has had to put its own address back in front. */
+    private var fellBackHome = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Read before the window is built, so a launch opens the chosen page
+        // straight away rather than loading the root and walking to it after.
+        ShellHome.attach(this)
+        homeUrl = ShellHome.url()
 
         // The screen stays on while the app is in front; listening behind the
         // screen is PlaybackService's job. The other flag lets the bar take a
@@ -108,7 +121,7 @@ class MainActivity : AppCompatActivity() {
         PlayerBridge.onPageTheme = this::applyPageTheme
 
         if (savedInstanceState == null) {
-            webView.loadUrl(BuildConfig.BASE_URL)
+            webView.loadUrl(homeUrl)
         } else {
             webView.restoreState(savedInstanceState)
         }
@@ -141,6 +154,33 @@ class MainActivity : AppCompatActivity() {
             openExternally(url)
             return true
         }
+
+        // A page that does not arrive is the one thing a chosen address can do
+        // to the shell that the shell cannot recover from: the setting lives in
+        // the page, so one that answers with an error would leave a listener
+        // with nothing to correct it in. The build's own address goes back in
+        // front, and the chosen one stays in the field to be fixed.
+        override fun onReceivedError(
+            view: WebView,
+            request: WebResourceRequest,
+            error: WebResourceError,
+        ) {
+            if (request.isForMainFrame) fallBackHome()
+        }
+
+        override fun onReceivedHttpError(
+            view: WebView,
+            request: WebResourceRequest,
+            response: WebResourceResponse,
+        ) {
+            if (request.isForMainFrame) fallBackHome()
+        }
+    }
+
+    private fun fallBackHome() {
+        if (fellBackHome || homeUrl == BuildConfig.BASE_URL) return
+        fellBackHome = true
+        webView.loadUrl(BuildConfig.BASE_URL)
     }
 
     /**

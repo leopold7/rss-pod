@@ -266,7 +266,8 @@ runtime:
 ### Player settings
 
 A settings button left of the language switcher opens a panel that holds the
-player preferences which are stored in the current browser:
+player preferences, all of which live in the current browser unless noted
+otherwise:
 
 - **Color theme**: follow the device, light, or dark. The panel and the header
   switch drive the same stored choice, and `theme_toggle: false` hides both.
@@ -279,6 +280,9 @@ player preferences which are stored in the current browser:
   button joins it that opens every category at once, each entry counted, next to
   "All", "Listen later" and "Bookmarks". The button is shown by default and can
   be turned off again in the same panel, in which case the row is left plain.
+- **Home page**: offered inside the Android app alone, because the address is
+  what the app is pointed at rather than what this browser is. The section on the
+  app below describes what it accepts.
 
 The player dock is a drawer as well. The handle in its top-right corner folds it
 down to a slim bar that keeps the play control and the current title, which hands
@@ -540,6 +544,12 @@ Worth knowing:
 - playback behind the screen relies on a foreground service keeping the process
   and its WebView alive. Some manufacturer ROMs still kill it, and the app has to
   be allowed to run in the background there
+- the app opens the address its build carries, and the settings panel in the page
+  can point it at another page of the same deployment, such as `/admin`. The app
+  keeps the choice and opens it from the next launch on. An address is only
+  accepted when it names the deployment the build was made for, which is also the
+  only place the field can be reached from; a page that fails to load falls back
+  to the build's own address
 - `versionCode` is the workflow run number, so Android refuses to install an
   older build over a newer one: uninstall first when going back to an earlier one
 

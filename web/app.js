@@ -245,6 +245,15 @@ const copy = {
     menuDownload: "Download",
     menuRetry: "Download again",
     openEpisodeActions: (title) => `Actions for ${title}`,
+    // The address the shell opens is the shell's to keep, so the wording never
+    // promises the choice lands on this page.
+    homeSettingLabel: "Home page",
+    homeSettingHint: "The app opens this address the next time it starts.",
+    homeSettingSave: "Save",
+    homeSettingSaved: "Saved. The app opens this address the next time it starts.",
+    homeSettingReset: "Reset",
+    homeSettingResetDone: "Reset. The app opens its own address again.",
+    homeSettingInvalid: (address) => `Enter an address of this deployment, such as ${address}/admin.`,
     playbackLogLabel: "Playback log",
     playbackLogAction: "View playback log",
     playbackLogTitle: "Playback log",
@@ -387,6 +396,13 @@ const copy = {
     menuDownload: "下载",
     menuRetry: "重新下载",
     openEpisodeActions: (title) => `${title} 的操作`,
+    homeSettingLabel: "主页路径",
+    homeSettingHint: "下次启动 App 时直接访问该地址",
+    homeSettingSave: "保存",
+    homeSettingSaved: "已保存，下次启动 App 时直接访问该地址",
+    homeSettingReset: "重置",
+    homeSettingResetDone: "已重置，下次启动 App 时回到默认地址",
+    homeSettingInvalid: (address) => `请填入本站地址，例如 ${address}/admin`,
     playbackLogLabel: "播放日志",
     playbackLogAction: "查看播放日志",
     playbackLogTitle: "播放日志",
@@ -489,6 +505,12 @@ const elements = {
   settingsDiagnosticsLabel: document.querySelector("#settings-diagnostics-label"),
   settingsLogOpen: document.querySelector("#settings-log-open"),
   settingsLogSummary: document.querySelector("#settings-log-summary"),
+  settingsHomeSection: document.querySelector("#settings-home-section"),
+  settingsHomeLabel: document.querySelector("#settings-home-label"),
+  settingsHomeInput: document.querySelector("#settings-home-input"),
+  settingsHomeSave: document.querySelector("#settings-home-save"),
+  settingsHomeReset: document.querySelector("#settings-home-reset"),
+  settingsHomeHint: document.querySelector("#settings-home-hint"),
   logDialog: document.querySelector("#log-dialog"),
   confirmDialog: document.querySelector("#confirm-dialog"),
   confirmTitle: document.querySelector("#confirm-title"),
@@ -2986,6 +3008,10 @@ function applyLocale() {
   elements.bookmarkClose.textContent = copy.closeLabel;
   elements.settingsDiagnosticsLabel.textContent = copy.playbackLogLabel;
   elements.settingsLogOpen.textContent = copy.playbackLogAction;
+  elements.settingsHomeLabel.textContent = copy.homeSettingLabel;
+  elements.settingsHomeSave.textContent = copy.homeSettingSave;
+  elements.settingsHomeReset.textContent = copy.homeSettingReset;
+  elements.settingsHomeHint.textContent = copy.homeSettingHint;
   elements.logTitle.textContent = copy.playbackLogTitle;
   elements.logFilters?.setAttribute("aria-label", copy.playbackLogFilterLabel);
   for (const button of elements.logLevelButtons) {
@@ -3135,6 +3161,7 @@ function initSettings() {
   }
   initPersonalSettings();
   initPlaybackLog();
+  initHomeSetting();
   renderDisplaySettings();
 }
 
@@ -5153,6 +5180,65 @@ let shellProgressSentAt = 0;
 
 function nativeShell() {
   return window.RssPodNative || null;
+}
+
+// ---- Home address ----
+
+// The shell opens one address, and the panel here offers the page of the
+// deployment it should open next. The address is kept by the shell rather than
+// in this browser: it is what the next window is pointed at, and a browser has
+// no next window to point, so the section is only uncovered where a shell is
+// there to keep the value and to answer for it.
+function shellHome() {
+  const shell = nativeShell();
+  return shell && typeof shell.homeUrl === "function" && typeof shell.setHomeUrl === "function"
+    ? shell
+    : null;
+}
+
+function initHomeSetting() {
+  if (!shellHome() || !elements.settingsHomeSection) return;
+  elements.settingsHomeSection.hidden = false;
+  renderHomeSetting();
+  elements.settingsHomeSave?.addEventListener("click", () => saveHomeSetting());
+  elements.settingsHomeReset?.addEventListener("click", () => resetHomeSetting());
+  // A field on screen has no form around it, so Enter is the key that saves it.
+  elements.settingsHomeInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    saveHomeSetting();
+  });
+}
+
+// The field reads the shell back rather than what was typed into it: the shell
+// is what holds the value, and it is what normalises it, so "/admin" comes back
+// as the address it stands for.
+function renderHomeSetting() {
+  const shell = shellHome();
+  if (!shell) return;
+  elements.settingsHomeInput.value = shell.homeUrl();
+}
+
+function saveHomeSetting() {
+  const shell = shellHome();
+  if (!shell) return;
+  const typed = elements.settingsHomeInput.value.trim();
+  if (!shell.setHomeUrl(typed)) {
+    elements.settingsHomeHint.textContent = copy.homeSettingInvalid(window.location.origin);
+    return;
+  }
+  renderHomeSetting();
+  // An empty field asks for the address the build carries, which is the choice
+  // the reset makes, so the two are answered with the same words.
+  elements.settingsHomeHint.textContent = typed ? copy.homeSettingSaved : copy.homeSettingResetDone;
+}
+
+function resetHomeSetting() {
+  const shell = shellHome();
+  if (!shell) return;
+  shell.setHomeUrl("");
+  renderHomeSetting();
+  elements.settingsHomeHint.textContent = copy.homeSettingResetDone;
 }
 
 // The bar around the page belongs to the shell's window, so the page only says

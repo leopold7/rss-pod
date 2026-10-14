@@ -310,6 +310,37 @@
                   <button id="settings-log-open" class="settings-log-open" type="button">View playback log</button>
                   <p id="settings-log-summary" class="settings-log-summary" role="status"></p>
                 </section>
+                <!-- The shell opens one address of the deployment, and which
+                     page of it that is can be chosen here. The address is kept
+                     by the shell rather than by this browser, so the section is
+                     hidden in the markup and only uncovered where there is a
+                     shell to keep what the field collects. -->
+                <section id="settings-home-section" class="settings-section" hidden>
+                  <p id="settings-home-label" class="settings-label">Home page</p>
+                  <input
+                    id="settings-home-input"
+                    class="settings-input"
+                    type="text"
+                    inputmode="url"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    aria-labelledby="settings-home-label"
+                    aria-describedby="settings-home-hint"
+                  />
+                  <!-- Both ends are taken as the same choice: the reset hands
+                       the shell back the address its build carries, and the
+                       field left empty asks for the same. -->
+                  <div class="settings-later-actions">
+                    <button id="settings-home-save" class="settings-later-clear" type="button">
+                      Save
+                    </button>
+                    <button id="settings-home-reset" class="settings-later-clear" type="button">
+                      Reset
+                    </button>
+                  </div>
+                  <p id="settings-home-hint" class="settings-hint" role="status"></p>
+                </section>
                 <!-- The header keeps these two controls on wide screens; on phones
                      they move in here so the header stays down to icon buttons. -->
                 <section id="settings-language-section" class="settings-section settings-mobile-only">

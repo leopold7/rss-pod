@@ -120,4 +120,20 @@ object PlayerBridge {
     fun stopped() {
         onMain { PlaybackService.onStopped() }
     }
+
+    /**
+     * The address the shell opens, and the choice that changes it. Both are kept
+     * by the shell rather than by the page, since the address is what the next
+     * window is pointed at, so there is nothing to move to the main thread here.
+     */
+    @JavascriptInterface
+    fun homeUrl(): String = ShellHome.url()
+
+    /**
+     * Answers whether the address was one the shell could open, so the field can
+     * say so instead of leaving a listener waiting for a change that never
+     * comes.
+     */
+    @JavascriptInterface
+    fun setHomeUrl(url: String): Boolean = ShellHome.save(url)
 }
